@@ -42,14 +42,7 @@ public static class ShimApplication
             Os = "linux",
             Arch = "amd64"
         }));
-        endpoints.MapGet($"{prefix}/info", () => Results.Json(new
-        {
-            ID = "wslc-docker-shim",
-            OSType = "linux",
-            Architecture = "x86_64",
-            OperatingSystem = "WSLc",
-            ServerVersion = "wslc-docker-shim"
-        }));
+        endpoints.MapGet($"{prefix}/info", GetInfo);
 
         endpoints.MapPost($"{prefix}/containers/create", CreateContainerAsync);
         endpoints.MapPost($"{prefix}/containers/{{id}}/start", StartContainerAsync);
@@ -160,6 +153,25 @@ public static class ShimApplication
             RyukCleanupSessionRegistry cleanupSessions,
             CancellationToken cancellationToken) =>
             DeleteResourceAsync(DockerResourceKind.Image, id, context, backend, listenerClassifier, cleanupSessions, cancellationToken));
+    }
+
+    private static IResult GetInfo(
+        HttpContext context,
+        IShimListenerClassifier listenerClassifier)
+    {
+        if (IsRyukListener(context, listenerClassifier))
+        {
+            return Results.NotFound();
+        }
+
+        return Results.Json(new
+        {
+            ID = "wslc-docker-shim",
+            OSType = "linux",
+            Architecture = "x86_64",
+            OperatingSystem = "WSLc",
+            ServerVersion = "wslc-docker-shim"
+        });
     }
 
     private static async Task<IResult> CreateContainerAsync(

@@ -31,7 +31,7 @@ Implement the Docker API subset Ryuk needs on the restricted listener:
 - `GET /version`
 - List containers, networks, volumes, and images with Docker label filters.
 - Remove containers, networks, volumes, and images.
-- Enforce that deletes only affect resources labeled `org.testcontainers=true` and matching the active session label.
+- Enforce that deletes only affect resources labeled `org.testcontainers.resource-reaper-session=<guid>` matching the active server-side cleanup session.
 
 Keep the normal Testcontainers-facing API:
 
@@ -39,16 +39,14 @@ Keep the normal Testcontainers-facing API:
 - Containers
 - Exec
 - Logs
-- Attach
-- Archive copy and read
+- Wait
 - Networks
 - Volumes
-- Build
 
 ## Security
 
 - Do not expose the full Docker-compatible API to WSLc containers.
-- The Ryuk-facing listener only supports cleanup endpoints and validates Testcontainers labels before deletion.
+- The Ryuk-facing listener only supports cleanup endpoints and validates the negotiated resource-reaper session before deletion.
 - Bind the full API to loopback only.
 - Generate a random Ryuk listener port per shim process.
 

@@ -137,6 +137,19 @@ public sealed class ShimHttpEndpointTests
     }
 
     [Fact]
+    public async Task Ryuk_listener_does_not_expose_docker_system_info()
+    {
+        using var server = await ShimTestServer.CreateAsync(new RecordingDockerBackend());
+        var client = server.GetTestClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/info");
+        request.Headers.Add(HeaderListenerClassifier.ListenerHeaderName, "ryuk");
+
+        var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
     public async Task Ryuk_listener_refuses_full_api_routes()
     {
         using var server = await ShimTestServer.CreateAsync(new RecordingDockerBackend());
