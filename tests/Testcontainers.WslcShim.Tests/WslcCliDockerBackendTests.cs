@@ -7,6 +7,50 @@ namespace Testcontainers.WslcShim.Tests;
 public sealed class WslcCliDockerBackendTests
 {
     [Fact]
+    public async Task CreateContainerAsync_passes_supported_create_settings_to_wslc()
+    {
+        var runner = new RecordingWslcProcessRunner
+        {
+            Result = new WslcCommandResult(0, "container-1", string.Empty)
+        };
+        var backend = new WslcCliDockerBackend(runner);
+
+        var response = await backend.CreateContainerAsync(
+            new DockerContainerCreateRequest
+            {
+                Image = "alpine:3.20",
+                User = "1000",
+                WorkingDir = "/workspace",
+                Entrypoint = ["/bin/sh"],
+                HostConfig = new DockerHostConfig
+                {
+                    AutoRemove = true,
+                    NetworkMode = "test-network"
+                },
+                NetworkingConfig = new DockerNetworkingConfig
+                {
+                    EndpointsConfig = new Dictionary<string, DockerEndpointSettings>
+                    {
+                        ["test-network"] = new() { Aliases = ["worker"] }
+                    }
+                }
+            },
+            isRyuk: false,
+            CancellationToken.None);
+
+        Assert.Equal("container-1", response.Id);
+        var command = Assert.Single(runner.Commands);
+        Assert.Contains("--rm", command.Arguments);
+        Assert.Contains("--network", command.Arguments);
+        Assert.Contains("test-network", command.Arguments);
+        Assert.Contains("--network-alias", command.Arguments);
+        Assert.Contains("worker", command.Arguments);
+        Assert.Contains("--entrypoint", command.Arguments);
+        Assert.Contains("--user", command.Arguments);
+        Assert.Contains("--workdir", command.Arguments);
+    }
+
+    [Fact]
     public async Task InspectResourceJsonAsync_moves_container_ports_to_network_settings()
     {
         var runner = new RecordingWslcProcessRunner

@@ -21,20 +21,21 @@ public static class RyukCreateRequestMutator
         var binds = request.HostConfig.Binds
             .Where(bind => !IsDockerSocketBind(bind))
             .ToArray();
+        var mounts = request.HostConfig.Mounts
+            .Where(mount => !IsDockerSocketMount(mount))
+            .ToArray();
 
-        var mutated = new DockerContainerCreateRequest
+        var mutated = request with
         {
-            Image = request.Image,
-            Name = request.Name,
             Env = environment,
-            Labels = request.Labels,
-            Cmd = request.Cmd,
-            ExposedPorts = request.ExposedPorts,
-            HostConfig = new DockerHostConfig
+            // Privileged mode is only requested so Docker-hosted Ryuk can use
+            // the daemon socket. The shim removes that socket and gives Ryuk a
+            // restricted TCP API instead, so privileged mode is unnecessary.
+            HostConfig = request.HostConfig with
             {
                 Binds = binds,
-                PortBindings = request.HostConfig.PortBindings,
-                PublishAllPorts = request.HostConfig.PublishAllPorts
+                Mounts = mounts,
+                Privileged = false
             }
         };
 
@@ -62,5 +63,11 @@ public static class RyukCreateRequestMutator
     {
         return bind.StartsWith("/var/run/docker.sock:", StringComparison.Ordinal) ||
                string.Equals(bind, "/var/run/docker.sock", StringComparison.Ordinal);
+    }
+
+    private static bool IsDockerSocketMount(DockerMount mount)
+    {
+        return string.Equals(mount.Source, "/var/run/docker.sock", StringComparison.Ordinal) ||
+               string.Equals(mount.Target, "/var/run/docker.sock", StringComparison.Ordinal);
     }
 }

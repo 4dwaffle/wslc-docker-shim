@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Testcontainers.WslcShim.Docker;
 using Testcontainers.WslcShim.Wslc;
 
@@ -95,6 +96,300 @@ public sealed class WslcCommandBuilderTests
 
         Assert.Contains("--publish", command.Arguments);
         Assert.Contains("8080/tcp", command.Arguments);
+    }
+
+    [Fact]
+    public void BuildCreateContainerCommand_maps_auto_remove_network_and_aliases()
+    {
+        var request = new DockerContainerCreateRequest
+        {
+            Image = "redis:7",
+            NetworkingConfig = new DockerNetworkingConfig
+            {
+                EndpointsConfig = new Dictionary<string, DockerEndpointSettings>
+                {
+                    ["test-network"] = new()
+                    {
+                        Aliases = ["cache", "redis"]
+                    }
+                }
+            },
+            HostConfig = new DockerHostConfig
+            {
+                AutoRemove = true,
+                NetworkMode = "test-network"
+            }
+        };
+
+        var command = WslcCommandBuilder.BuildCreateContainerCommand(request, "A:\\temp\\cid.txt");
+
+        Assert.Equal(
+            [
+                "create",
+                "--cidfile",
+                "A:\\temp\\cid.txt",
+                "--network",
+                "test-network",
+                "--network-alias",
+                "cache",
+                "--network-alias",
+                "redis",
+                "--rm",
+                "redis:7"
+            ],
+            command.Arguments);
+    }
+
+    [Fact]
+    public void BuildCreateContainerCommand_maps_entrypoint_identity_terminal_and_resource_settings()
+    {
+        var request = new DockerContainerCreateRequest
+        {
+            Image = "alpine:3.20",
+            Hostname = "worker-1",
+            Domainname = "example.test",
+            User = "1000:1000",
+            WorkingDir = "/workspace",
+            Entrypoint = ["/bin/sh", "-c"],
+            Cmd = ["echo ready"],
+            Tty = true,
+            OpenStdin = true,
+            StopSignal = "SIGTERM",
+            HostConfig = new DockerHostConfig
+            {
+                Memory = 512L * 1024 * 1024,
+                ShmSize = 64L * 1024 * 1024,
+                Tmpfs = new Dictionary<string, string>
+                {
+                    ["/tmp"] = "rw,noexec"
+                }
+            }
+        };
+
+        var command = WslcCommandBuilder.BuildCreateContainerCommand(request, "cid.txt");
+
+        Assert.Equal(
+            [
+                "create", "--cidfile", "cid.txt",
+                "--hostname", "worker-1",
+                "--domainname", "example.test",
+                "--user", "1000:1000",
+                "--workdir", "/workspace",
+                "--entrypoint", "/bin/sh",
+                "--memory", "512M",
+                "--shm-size", "64M",
+                "--tmpfs", "/tmp:rw,noexec",
+                "--interactive",
+                "--tty",
+                "--stop-signal", "SIGTERM",
+                "alpine:3.20", "-c", "echo ready"
+            ],
+            command.Arguments);
+    }
+
+    [Fact]
+    public void BuildCreateContainerCommand_maps_remaining_wslc_create_options()
+    {
+        var request = new DockerContainerCreateRequest
+        {
+            Image = "nvidia/cuda:latest",
+            Volumes = new Dictionary<string, object?> { ["/cache"] = new() },
+            HostConfig = new DockerHostConfig
+            {
+                Dns = ["1.1.1.1"],
+                DnsOptions = ["ndots:1"],
+                DnsSearch = ["example.test"],
+                NanoCpus = 500_000_000,
+                Ulimits = [new DockerUlimit { Name = "nofile", Soft = 1024, Hard = 2048 }],
+                DeviceRequests =
+                [
+                    new DockerDeviceRequest
+                    {
+                        Driver = "nvidia",
+                        Count = -1,
+                        Capabilities = [["gpu"]]
+                    }
+                ]
+            }
+        };
+
+        var command = WslcCommandBuilder.BuildCreateContainerCommand(request, "cid.txt");
+
+        Assert.Equal(
+            [
+                "create", "--cidfile", "cid.txt",
+                "--volume", "/cache",
+                "--dns", "1.1.1.1",
+                "--dns-option", "ndots:1",
+                "--dns-search", "example.test",
+                "--cpus", "0.5",
+                "--ulimit", "nofile=1024:2048",
+                "--gpus", "all",
+                "nvidia/cuda:latest"
+            ],
+            command.Arguments);
+    }
+
+    [Fact]
+    public void BuildCreateContainerCommand_maps_structured_bind_volume_and_tmpfs_mounts()
+    {
+        var request = new DockerContainerCreateRequest
+        {
+            Image = "alpine:3.20",
+            HostConfig = new DockerHostConfig
+            {
+                Mounts =
+                [
+                    new DockerMount
+                    {
+                        Type = "bind",
+                        Source = "C:\\work",
+                        Target = "/workspace",
+                        ReadOnly = true
+                    },
+                    new DockerMount
+                    {
+                        Type = "volume",
+                        Source = "cache",
+                        Target = "/cache"
+                    },
+                    new DockerMount
+                    {
+                        Type = "tmpfs",
+                        Target = "/tmp",
+                        ReadOnly = true,
+                        TmpfsOptions = new DockerTmpfsOptions
+                        {
+                            SizeBytes = 64L * 1024 * 1024,
+                            Mode = 493
+                        }
+                    }
+                ]
+            }
+        };
+
+        var command = WslcCommandBuilder.BuildCreateContainerCommand(request, "cid.txt");
+
+        Assert.Equal(
+            [
+                "create", "--cidfile", "cid.txt",
+                "--volume", "C:\\work:/workspace:ro",
+                "--volume", "cache:/cache",
+                "--tmpfs", "/tmp:ro,size=64M,mode=755",
+                "alpine:3.20"
+            ],
+            command.Arguments);
+    }
+
+    [Fact]
+    public void BuildCreateContainerCommand_rejects_docker_network_namespace_modes()
+    {
+        var request = new DockerContainerCreateRequest
+        {
+            Image = "alpine:3.20",
+            HostConfig = new DockerHostConfig { NetworkMode = "host" }
+        };
+
+        var exception = Assert.Throws<UnsupportedDockerCreateOptionException>(
+            () => WslcCommandBuilder.BuildCreateContainerCommand(request, "cid.txt"));
+
+        Assert.Contains("HostConfig.NetworkMode (Docker namespace mode)", exception.OptionPaths);
+    }
+
+    [Fact]
+    public void BuildCreateContainerCommand_treats_docker_bridge_as_wslc_default_network()
+    {
+        var command = WslcCommandBuilder.BuildCreateContainerCommand(
+            new DockerContainerCreateRequest
+            {
+                Image = "alpine:3.20",
+                HostConfig = new DockerHostConfig { NetworkMode = "bridge" }
+            },
+            "cid.txt");
+
+        Assert.Equal(
+            ["create", "--cidfile", "cid.txt", "alpine:3.20"],
+            command.Arguments);
+    }
+
+    [Fact]
+    public void BuildCreateContainerCommand_rejects_unrepresented_exposed_ports()
+    {
+        var request = new DockerContainerCreateRequest
+        {
+            Image = "alpine:3.20",
+            ExposedPorts = new Dictionary<string, object?> { ["8080/tcp"] = new() }
+        };
+
+        var exception = Assert.Throws<UnsupportedDockerCreateOptionException>(
+            () => WslcCommandBuilder.BuildCreateContainerCommand(request, "cid.txt"));
+
+        Assert.Contains("ExposedPorts[8080/tcp] (no PortBinding or PublishAllPorts)", exception.OptionPaths);
+    }
+
+    [Fact]
+    public void BuildCreateContainerCommand_rejects_meaningful_unsupported_docker_fields()
+    {
+        var request = JsonSerializer.Deserialize<DockerContainerCreateRequest>(
+            """
+            {
+              "Image": "alpine:3.20",
+              "Healthcheck": { "Test": ["CMD", "true"] },
+              "HostConfig": {
+                "Privileged": true
+              }
+            }
+            """)!;
+
+        var exception = Assert.Throws<UnsupportedDockerCreateOptionException>(
+            () => WslcCommandBuilder.BuildCreateContainerCommand(request, "cid.txt"));
+
+        Assert.Contains("Healthcheck", exception.OptionPaths);
+        Assert.Contains("HostConfig.Privileged", exception.OptionPaths);
+    }
+
+    [Fact]
+    public void BuildCreateContainerCommand_accepts_default_values_for_unmapped_docker_fields()
+    {
+        var request = JsonSerializer.Deserialize<DockerContainerCreateRequest>(
+            """
+            {
+              "Image": "alpine:3.20",
+              "ArgsEscaped": false,
+              "Healthcheck": null,
+              "HostConfig": {
+                "CpuShares": 0,
+                "Privileged": false,
+                "LogConfig": { "Type": "", "Config": {} }
+              }
+            }
+            """)!;
+
+        var command = WslcCommandBuilder.BuildCreateContainerCommand(request, "cid.txt");
+
+        Assert.Equal(["create", "--cidfile", "cid.txt", "alpine:3.20"], command.Arguments);
+    }
+
+    [Fact]
+    public void BuildCreateContainerCommand_rejects_multiple_networks_instead_of_dropping_them()
+    {
+        var request = new DockerContainerCreateRequest
+        {
+            Image = "alpine:3.20",
+            NetworkingConfig = new DockerNetworkingConfig
+            {
+                EndpointsConfig = new Dictionary<string, DockerEndpointSettings>
+                {
+                    ["network-a"] = new(),
+                    ["network-b"] = new()
+                }
+            }
+        };
+
+        var exception = Assert.Throws<UnsupportedDockerCreateOptionException>(
+            () => WslcCommandBuilder.BuildCreateContainerCommand(request, "cid.txt"));
+
+        Assert.Contains("NetworkingConfig.EndpointsConfig (multiple networks)", exception.OptionPaths);
     }
 
     [Fact]

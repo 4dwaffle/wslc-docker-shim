@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Testcontainers.WslcShim.Docker;
 using Testcontainers.WslcShim.Ryuk;
+using Testcontainers.WslcShim.Wslc;
 
 namespace Testcontainers.WslcShim.Http;
 
@@ -172,6 +173,17 @@ public static class ShimApplication
 
         var requestWithName = ApplyCreateName(request, context.Request.Query["name"]);
         var mutation = RyukCreateRequestMutator.MutateIfRyuk(requestWithName, options.RyukEndpoint);
+        try
+        {
+            WslcCreateRequestCompatibility.Validate(mutation.Request);
+        }
+        catch (UnsupportedDockerCreateOptionException exception)
+        {
+            return Results.Json(
+                new { message = exception.Message },
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
         var response = await backend.CreateContainerAsync(mutation.Request, mutation.IsRyuk, cancellationToken);
         return Results.Json(response, statusCode: StatusCodes.Status201Created);
     }
@@ -468,16 +480,7 @@ public static class ShimApplication
             return request;
         }
 
-        return new DockerContainerCreateRequest
-        {
-            Image = request.Image,
-            Name = queryName,
-            Env = request.Env,
-            Labels = request.Labels,
-            Cmd = request.Cmd,
-            ExposedPorts = request.ExposedPorts,
-            HostConfig = request.HostConfig
-        };
+        return request with { Name = queryName };
     }
 
     private static object ToDockerListResponse(

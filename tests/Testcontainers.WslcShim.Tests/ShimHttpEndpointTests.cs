@@ -39,6 +39,79 @@ public sealed class ShimHttpEndpointTests
         Assert.DoesNotContain(created.Request.HostConfig.Binds, bind => bind.Contains("/var/run/docker.sock"));
     }
 
+    [Fact]
+    public async Task Full_listener_preserves_supported_create_settings_for_backend_translation()
+    {
+        var backend = new RecordingDockerBackend();
+        using var server = await ShimTestServer.CreateAsync(backend);
+        var client = server.GetTestClient();
+
+        var response = await client.PostAsJsonAsync("/containers/create?name=worker",
+            new DockerContainerCreateRequest
+            {
+                Image = "alpine:3.20",
+                Hostname = "worker-host",
+                User = "1000:1000",
+                WorkingDir = "/workspace",
+                Entrypoint = ["/bin/sh", "-c"],
+                Tty = true,
+                HostConfig = new DockerHostConfig
+                {
+                    AutoRemove = true,
+                    NetworkMode = "test-network",
+                    Memory = 256L * 1024 * 1024,
+                    Tmpfs = new Dictionary<string, string> { ["/tmp"] = "rw" }
+                },
+                NetworkingConfig = new DockerNetworkingConfig
+                {
+                    EndpointsConfig = new Dictionary<string, DockerEndpointSettings>
+                    {
+                        ["test-network"] = new() { Aliases = ["worker-alias"] }
+                    }
+                }
+            });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var created = Assert.Single(backend.CreatedContainers).Request;
+        Assert.Equal("worker", created.Name);
+        Assert.Equal("worker-host", created.Hostname);
+        Assert.Equal("1000:1000", created.User);
+        Assert.Equal("/workspace", created.WorkingDir);
+        Assert.Equal(["/bin/sh", "-c"], created.Entrypoint);
+        Assert.True(created.Tty);
+        Assert.True(created.HostConfig.AutoRemove);
+        Assert.Equal("test-network", created.HostConfig.NetworkMode);
+        Assert.Equal(256L * 1024 * 1024, created.HostConfig.Memory);
+        Assert.Equal("rw", created.HostConfig.Tmpfs["/tmp"]);
+        Assert.Equal(["worker-alias"], created.NetworkingConfig.EndpointsConfig["test-network"].Aliases);
+    }
+
+    [Fact]
+    public async Task Full_listener_rejects_unsupported_create_settings_instead_of_dropping_them()
+    {
+        var backend = new RecordingDockerBackend();
+        using var server = await ShimTestServer.CreateAsync(backend);
+        var client = server.GetTestClient();
+        using var content = new StringContent(
+            """
+            {
+              "Image": "alpine:3.20",
+              "HostConfig": {
+                "Privileged": true
+              }
+            }
+            """,
+            System.Text.Encoding.UTF8,
+            "application/json");
+
+        var response = await client.PostAsync("/containers/create", content);
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("HostConfig.Privileged", body);
+        Assert.Empty(backend.CreatedContainers);
+    }
+
     [Theory]
     [InlineData("/v1.43/_ping", "OK")]
     [InlineData("/v1.43/version", "wslc-docker-shim")]
