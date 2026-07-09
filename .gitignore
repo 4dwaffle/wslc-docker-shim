@@ -40,6 +40,8 @@ ScaffoldingReadMe.txt
 .env
 
 # Others
+.vs/
+*.user
 ~$*
 *~
 CodeCoverage/
