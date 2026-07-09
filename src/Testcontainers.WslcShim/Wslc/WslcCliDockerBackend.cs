@@ -1,14 +1,48 @@
-using System.Collections.Concurrent;
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Testcontainers.WslcShim.Docker;
 
 namespace Testcontainers.WslcShim.Wslc;
 
-public sealed class WslcCliDockerBackend(IWslcProcessRunner processRunner) : IWslcDockerBackend
+public sealed class WslcCliDockerBackend : IWslcDockerBackend
 {
     private static readonly TimeSpan WaitPollInterval = TimeSpan.FromMilliseconds(250);
-    private readonly ConcurrentDictionary<string, DockerExecState> execs = new(StringComparer.Ordinal);
+    private readonly IWslcProcessRunner processRunner;
+    private readonly TimeProvider timeProvider;
+    private readonly WslcExecCacheOptions execCacheOptions;
+    private readonly object execSync = new();
+    private readonly Dictionary<string, DockerExecState> execs = new(StringComparer.Ordinal);
+    private readonly LinkedList<DockerExecState> completedExecs = [];
+
+    public WslcCliDockerBackend(IWslcProcessRunner processRunner)
+        : this(processRunner, TimeProvider.System, new WslcExecCacheOptions())
+    {
+    }
+
+    internal WslcCliDockerBackend(
+        IWslcProcessRunner processRunner,
+        TimeProvider timeProvider,
+        WslcExecCacheOptions execCacheOptions)
+    {
+        this.processRunner = processRunner ?? throw new ArgumentNullException(nameof(processRunner));
+        this.timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
+        this.execCacheOptions = execCacheOptions ?? throw new ArgumentNullException(nameof(execCacheOptions));
+
+        if (execCacheOptions.CompletedExecRetention <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(execCacheOptions),
+                "Completed exec retention must be greater than zero.");
+        }
+
+        if (execCacheOptions.MaxCompletedExecs <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(execCacheOptions),
+                "The completed exec cache bound must be greater than zero.");
+        }
+    }
 
     public async Task<DockerCreateContainerResponse> CreateContainerAsync(
         DockerContainerCreateRequest request,
@@ -186,8 +220,15 @@ public sealed class WslcCliDockerBackend(IWslcProcessRunner processRunner) : IWs
         DockerExecCreateRequest request,
         CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         var id = Guid.NewGuid().ToString("N");
-        execs[id] = new DockerExecState(containerId, request, null);
+        lock (execSync)
+        {
+            PruneCompletedExecs(timeProvider.GetTimestamp());
+            execs.Add(id, new DockerExecState(id, containerId, request));
+        }
+
         return Task.FromResult(new DockerExecCreateResponse(id));
     }
 
@@ -196,22 +237,66 @@ public sealed class WslcCliDockerBackend(IWslcProcessRunner processRunner) : IWs
         DockerExecStartRequest request,
         CancellationToken cancellationToken)
     {
-        if (!execs.TryGetValue(id, out var state))
+        cancellationToken.ThrowIfCancellationRequested();
+
+        DockerExecState state;
+        lock (execSync)
         {
-            return null;
+            PruneCompletedExecs(timeProvider.GetTimestamp());
+            if (!execs.TryGetValue(id, out state!) || state.Running)
+            {
+                return null;
+            }
+
+            if (state.CompletedNode is { } completedNode)
+            {
+                completedExecs.Remove(completedNode);
+                state.CompletedNode = null;
+                state.ExitCode = null;
+            }
+
+            state.Running = true;
         }
 
         var command = WslcCommandBuilder.BuildExecCommand(state.ContainerId, state.Request);
-        var result = await processRunner.RunAsync(command, cancellationToken);
-        execs[id] = state with { ExitCode = result.ExitCode };
+        WslcCommandResult result;
+        try
+        {
+            result = await processRunner.RunAsync(command, cancellationToken);
+        }
+        catch
+        {
+            lock (execSync)
+            {
+                var completedAt = timeProvider.GetTimestamp();
+                PruneCompletedExecs(completedAt);
+                RetainCompletedExec(state, exitCode: null, completedAt);
+            }
+
+            throw;
+        }
+
+        lock (execSync)
+        {
+            var completedAt = timeProvider.GetTimestamp();
+            PruneCompletedExecs(completedAt);
+            RetainCompletedExec(state, result.ExitCode, completedAt);
+        }
+
         return new DockerExecStartResponse(result.StandardOutput + result.StandardError, result.ExitCode);
     }
 
     public Task<DockerExecInspectResponse?> InspectExecAsync(string id, CancellationToken cancellationToken)
     {
-        return Task.FromResult(execs.TryGetValue(id, out var state)
-            ? new DockerExecInspectResponse(id, false, state.ExitCode)
-            : null);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        lock (execSync)
+        {
+            PruneCompletedExecs(timeProvider.GetTimestamp());
+            return Task.FromResult(execs.TryGetValue(id, out var state)
+                ? new DockerExecInspectResponse(id, state.Running, state.ExitCode)
+                : null);
+        }
     }
 
     public async Task PullImageAsync(string image, CancellationToken cancellationToken)
@@ -349,8 +434,56 @@ public sealed class WslcCliDockerBackend(IWslcProcessRunner processRunner) : IWs
         return node.ToJsonString();
     }
 
-    private sealed record DockerExecState(
-        string ContainerId,
-        DockerExecCreateRequest Request,
-        long? ExitCode);
+    private void PruneCompletedExecs(long now)
+    {
+        while (completedExecs.First is { } node &&
+               timeProvider.GetElapsedTime(node.Value.CompletedAt, now) >= execCacheOptions.CompletedExecRetention)
+        {
+            EvictCompletedExec(node);
+        }
+    }
+
+    private void EnforceCompletedExecBound()
+    {
+        while (completedExecs.Count > execCacheOptions.MaxCompletedExecs)
+        {
+            EvictCompletedExec(completedExecs.First!);
+        }
+    }
+
+    private void RetainCompletedExec(DockerExecState state, long? exitCode, long completedAt)
+    {
+        state.Running = false;
+        state.ExitCode = exitCode;
+        state.CompletedAt = completedAt;
+        state.CompletedNode = completedExecs.AddLast(state);
+        EnforceCompletedExecBound();
+    }
+
+    private void EvictCompletedExec(LinkedListNode<DockerExecState> node)
+    {
+        completedExecs.Remove(node);
+        node.Value.CompletedNode = null;
+        execs.Remove(node.Value.Id);
+    }
+
+    private sealed class DockerExecState(
+        string id,
+        string containerId,
+        DockerExecCreateRequest request)
+    {
+        public string Id { get; } = id;
+
+        public string ContainerId { get; } = containerId;
+
+        public DockerExecCreateRequest Request { get; } = request;
+
+        public bool Running { get; set; }
+
+        public long? ExitCode { get; set; }
+
+        public long CompletedAt { get; set; }
+
+        public LinkedListNode<DockerExecState>? CompletedNode { get; set; }
+    }
 }
