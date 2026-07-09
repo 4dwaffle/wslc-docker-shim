@@ -133,7 +133,21 @@ public sealed class ShimHttpEndpointTests
 
         var body = await (await client.GetAsync("/info")).Content.ReadAsStringAsync();
 
-        Assert.Contains("\"osType\":\"linux\"", body);
+        Assert.Contains("\"OSType\":\"linux\"", body);
+        Assert.DoesNotContain("\"osType\"", body);
+    }
+
+    [Fact]
+    public async Task Full_listener_returns_docker_version_with_wire_property_names()
+    {
+        using var server = await ShimTestServer.CreateAsync(new RecordingDockerBackend());
+        var client = server.GetTestClient();
+
+        var body = await (await client.GetAsync("/version")).Content.ReadAsStringAsync();
+
+        Assert.Contains("\"ApiVersion\":\"1.43\"", body);
+        Assert.Contains("\"MinAPIVersion\":\"1.24\"", body);
+        Assert.DoesNotContain("\"apiVersion\"", body);
     }
 
     [Fact]

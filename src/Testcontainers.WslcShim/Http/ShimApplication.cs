@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using System.Globalization;
+using System.Text.Json;
 using Testcontainers.WslcShim.Docker;
 using Testcontainers.WslcShim.Ryuk;
 using Testcontainers.WslcShim.Wslc;
@@ -12,6 +13,11 @@ namespace Testcontainers.WslcShim.Http;
 
 public static class ShimApplication
 {
+    private static readonly JsonSerializerOptions DockerJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        PropertyNamingPolicy = null
+    };
+
     public static void ConfigureServices(
         IServiceCollection services,
         IWslcDockerBackend backend,
@@ -41,7 +47,7 @@ public static class ShimApplication
             MinAPIVersion = "1.24",
             Os = "linux",
             Arch = "amd64"
-        }));
+        }, DockerJsonOptions));
         endpoints.MapGet($"{prefix}/info", GetInfo);
 
         endpoints.MapPost($"{prefix}/containers/create", CreateContainerAsync);
@@ -171,7 +177,7 @@ public static class ShimApplication
             Architecture = "x86_64",
             OperatingSystem = "WSLc",
             ServerVersion = "wslc-docker-shim"
-        });
+        }, DockerJsonOptions);
     }
 
     private static async Task<IResult> CreateContainerAsync(
