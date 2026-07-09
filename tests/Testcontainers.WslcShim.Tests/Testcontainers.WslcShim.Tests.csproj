@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Testcontainers.WslcShim\Testcontainers.WslcShim.csproj" />
+    <ProjectReference Include="..\Testcontainers.WslcShim.ProcessTestHelper\Testcontainers.WslcShim.ProcessTestHelper.csproj" />
   </ItemGroup>
 
 </Project>
