@@ -51,6 +51,48 @@ public sealed class WslcCliDockerBackendTests
     }
 
     [Fact]
+    public async Task InspectResourceAsync_reads_iso_creation_timestamp()
+    {
+        var runner = new RecordingWslcProcessRunner
+        {
+            Result = new WslcCommandResult(
+                0,
+                """[{"Id":"container-1","Created":"2026-07-09T21:58:23.734685022Z"}]""",
+                string.Empty)
+        };
+        var backend = new WslcCliDockerBackend(runner);
+
+        var resource = await backend.InspectResourceAsync(
+            DockerResourceKind.Container,
+            "container-1",
+            CancellationToken.None);
+
+        Assert.NotNull(resource);
+        Assert.Equal(1783634303, resource.CreatedAt?.ToUnixTimeSeconds());
+    }
+
+    [Fact]
+    public async Task InspectResourceAsync_reads_numeric_creation_timestamp()
+    {
+        var runner = new RecordingWslcProcessRunner
+        {
+            Result = new WslcCommandResult(
+                0,
+                """[{"Id":"image-1","CreatedAt":1783634303}]""",
+                string.Empty)
+        };
+        var backend = new WslcCliDockerBackend(runner);
+
+        var resource = await backend.InspectResourceAsync(
+            DockerResourceKind.Image,
+            "image-1",
+            CancellationToken.None);
+
+        Assert.NotNull(resource);
+        Assert.Equal(1783634303, resource.CreatedAt?.ToUnixTimeSeconds());
+    }
+
+    [Fact]
     public async Task InspectResourceJsonAsync_moves_container_ports_to_network_settings()
     {
         var runner = new RecordingWslcProcessRunner

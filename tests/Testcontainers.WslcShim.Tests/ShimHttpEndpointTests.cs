@@ -327,23 +327,21 @@ public sealed class ShimHttpEndpointTests
             created.Request.Labels["org.testcontainers"] == "true");
     }
 
+    private const string ReaperSessionA = "11111111-1111-1111-1111-111111111111";
+    private const string ReaperSessionB = "22222222-2222-2222-2222-222222222222";
+
     [Fact]
-    public async Task Ryuk_listener_refuses_delete_when_resource_does_not_match_session_filter()
+    public async Task Ryuk_listener_never_authorizes_delete_from_query_filters()
     {
         var backend = new RecordingDockerBackend();
-        backend.Resources[DockerResourceKind.Container]["container-1"] = new DockerResourceSnapshot(
+        backend.Resources[DockerResourceKind.Container]["container-1"] = SessionResource(
             "container-1",
-            new Dictionary<string, string>
-            {
-                ["org.testcontainers"] = "true",
-                ["org.testcontainers.session-id"] = "session-b"
-            });
+            ReaperSessionA);
         using var server = await ShimTestServer.CreateAsync(backend);
         var client = server.GetTestClient();
-        using var request = new HttpRequestMessage(
+        using var request = RyukRequest(
             HttpMethod.Delete,
-            "/containers/container-1?filters=%7B%22label%22%3A%5B%22org.testcontainers%3Dtrue%22%2C%22org.testcontainers.session-id%3Dsession-a%22%5D%7D");
-        request.Headers.Add(HeaderListenerClassifier.ListenerHeaderName, "ryuk");
+            $"/containers/container-1?filters={ModernSessionFilters(ReaperSessionA)}");
 
         var response = await client.SendAsync(request);
 
@@ -351,58 +349,72 @@ public sealed class ShimHttpEndpointTests
         Assert.Empty(backend.DeletedContainers);
     }
 
-    [Fact]
-    public async Task Ryuk_listener_deletes_resources_matching_testcontainers_session_filter()
+    [Theory]
+    [InlineData("/containers/json", "/containers/container-1", DockerResourceKind.Container, "container-1", "\"created\":1783634303")]
+    [InlineData("/networks", "/networks/network-1", DockerResourceKind.Network, "network-1", "\"created\":\"2026-07-09T21:58:23.0000000Z\"")]
+    [InlineData("/volumes", "/volumes/volume-1", DockerResourceKind.Volume, "volume-1", "\"createdAt\":\"2026-07-09T21:58:23.0000000Z\"")]
+    [InlineData("/images/json", "/images/image-1", DockerResourceKind.Image, "image-1", "\"created\":1783634303")]
+    public async Task Ryuk_protocol_lists_with_modern_session_filter_then_deletes_by_id_without_filters(
+        string listPath,
+        string deletePath,
+        DockerResourceKind resourceKind,
+        string resourceId,
+        string expectedTimestamp)
     {
         var backend = new RecordingDockerBackend();
-        backend.Resources[DockerResourceKind.Container]["container-1"] = new DockerResourceSnapshot(
-            "container-1",
-            new Dictionary<string, string>
-            {
-                ["org.testcontainers"] = "true",
-                ["org.testcontainers.session-id"] = "session-a"
-            });
+        backend.Resources[resourceKind][resourceId] = SessionResource(resourceId, ReaperSessionA);
+        backend.Resources[resourceKind]["other-session"] = SessionResource("other-session", ReaperSessionB);
+        backend.Resources[resourceKind]["unlabelled"] = new DockerResourceSnapshot(
+            "unlabelled",
+            new Dictionary<string, string>(),
+            CreatedAt: DateTimeOffset.FromUnixTimeSeconds(1783634303));
         using var server = await ShimTestServer.CreateAsync(backend);
         var client = server.GetTestClient();
-        using var request = new HttpRequestMessage(
-            HttpMethod.Delete,
-            "/containers/container-1?filters=%7B%22label%22%3A%5B%22org.testcontainers%3Dtrue%22%2C%22org.testcontainers.session-id%3Dsession-a%22%5D%7D");
-        request.Headers.Add(HeaderListenerClassifier.ListenerHeaderName, "ryuk");
+        await RegisterRyukSessionAsync(client, ReaperSessionA);
 
-        var response = await client.SendAsync(request);
+        using var listRequest = RyukRequest(
+            HttpMethod.Get,
+            $"{listPath}?filters={ModernSessionFilters(ReaperSessionA)}");
+        var listResponse = await client.SendAsync(listRequest);
+        var body = await listResponse.Content.ReadAsStringAsync();
 
-        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
-        Assert.Equal(["container-1"], backend.DeletedContainers);
+        Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode);
+        Assert.Contains(resourceId, body);
+        Assert.DoesNotContain("other-session", body);
+        Assert.DoesNotContain("unlabelled", body);
+        Assert.Contains(expectedTimestamp, body);
+
+        using var deleteRequest = RyukRequest(HttpMethod.Delete, deletePath);
+        var deleteResponse = await client.SendAsync(deleteRequest);
+
+        Assert.True(deleteResponse.StatusCode is HttpStatusCode.NoContent or HttpStatusCode.OK);
+        Assert.Contains((resourceKind, resourceId), backend.DeletedResources);
     }
 
     [Theory]
-    [InlineData("/networks/network-1", DockerResourceKind.Network, "network-1")]
-    [InlineData("/volumes/volume-1", DockerResourceKind.Volume, "volume-1")]
-    [InlineData("/images/image-1", DockerResourceKind.Image, "image-1")]
-    public async Task Ryuk_listener_deletes_matching_non_container_resources(
-        string path,
-        DockerResourceKind resourceKind,
-        string resourceId)
+    [InlineData("other-session")]
+    [InlineData("unlabelled")]
+    public async Task Ryuk_listener_rejects_filterless_delete_for_resources_outside_active_session(string resourceId)
     {
         var backend = new RecordingDockerBackend();
-        backend.Resources[resourceKind][resourceId] = new DockerResourceSnapshot(
-            resourceId,
-            new Dictionary<string, string>
-            {
-                ["org.testcontainers"] = "true",
-                ["org.testcontainers.session-id"] = "session-a"
-            });
+        backend.Resources[DockerResourceKind.Container]["matching"] = SessionResource("matching", ReaperSessionA);
+        backend.Resources[DockerResourceKind.Container]["other-session"] = SessionResource("other-session", ReaperSessionB);
+        backend.Resources[DockerResourceKind.Container]["unlabelled"] = new DockerResourceSnapshot(
+            "unlabelled",
+            new Dictionary<string, string>());
         using var server = await ShimTestServer.CreateAsync(backend);
         var client = server.GetTestClient();
-        using var request = new HttpRequestMessage(
-            HttpMethod.Delete,
-            $"{path}?filters=%7B%22label%22%3A%5B%22org.testcontainers%3Dtrue%22%2C%22org.testcontainers.session-id%3Dsession-a%22%5D%7D");
-        request.Headers.Add(HeaderListenerClassifier.ListenerHeaderName, "ryuk");
+        await RegisterRyukSessionAsync(client, ReaperSessionA);
+        using var listRequest = RyukRequest(
+            HttpMethod.Get,
+            $"/containers/json?filters={ModernSessionFilters(ReaperSessionA)}");
+        Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(listRequest)).StatusCode);
 
-        var response = await client.SendAsync(request);
+        using var deleteRequest = RyukRequest(HttpMethod.Delete, $"/containers/{resourceId}");
+        var response = await client.SendAsync(deleteRequest);
 
-        Assert.True(response.StatusCode is HttpStatusCode.NoContent or HttpStatusCode.OK);
-        Assert.Contains((resourceKind, resourceId), backend.DeletedResources);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Empty(backend.DeletedContainers);
     }
 
     [Theory]
@@ -410,15 +422,14 @@ public sealed class ShimHttpEndpointTests
     [InlineData("/networks")]
     [InlineData("/volumes")]
     [InlineData("/images/json")]
-    public async Task Ryuk_listener_rejects_list_requests_without_testcontainers_session_filter(string path)
+    public async Task Ryuk_listener_rejects_list_requests_without_resource_reaper_session_filter(string path)
     {
         var backend = new RecordingDockerBackend();
         backend.Resources[DockerResourceKind.Container]["container-1"] = new DockerResourceSnapshot(
             "container-1",
             new Dictionary<string, string>
             {
-                ["org.testcontainers"] = "true",
-                ["org.testcontainers.session-id"] = "session-a"
+                ["org.testcontainers.resource-reaper-session"] = ReaperSessionA
             });
         using var server = await ShimTestServer.CreateAsync(backend);
         var client = server.GetTestClient();
@@ -430,42 +441,82 @@ public sealed class ShimHttpEndpointTests
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
-    [Theory]
-    [InlineData("/containers/json", DockerResourceKind.Container, "container-1")]
-    [InlineData("/networks", DockerResourceKind.Network, "network-1")]
-    [InlineData("/volumes", DockerResourceKind.Volume, "volume-1")]
-    [InlineData("/images/json", DockerResourceKind.Image, "image-1")]
-    public async Task Ryuk_listener_lists_resources_with_docker_label_filters(
-        string path,
-        DockerResourceKind resourceKind,
-        string resourceId)
+    [Fact]
+    public async Task Ryuk_listener_rejects_a_well_formed_but_unregistered_session_filter()
     {
         var backend = new RecordingDockerBackend();
-        backend.Resources[resourceKind][resourceId] = new DockerResourceSnapshot(
-            resourceId,
-            new Dictionary<string, string>
-            {
-                ["org.testcontainers"] = "true",
-                ["org.testcontainers.session-id"] = "session-a"
-            });
-        backend.Resources[resourceKind]["other"] = new DockerResourceSnapshot(
-            "other",
-            new Dictionary<string, string>
-            {
-                ["org.testcontainers"] = "true",
-                ["org.testcontainers.session-id"] = "session-b"
-            });
         using var server = await ShimTestServer.CreateAsync(backend);
         var client = server.GetTestClient();
-        using var request = new HttpRequestMessage(
+        using var request = RyukRequest(
             HttpMethod.Get,
-            $"{path}?filters=%7B%22label%22%3A%5B%22org.testcontainers%3Dtrue%22%2C%22org.testcontainers.session-id%3Dsession-a%22%5D%7D");
+            $"/containers/json?filters={ModernSessionFilters(ReaperSessionA)}");
+
+        var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Ryuk_listener_does_not_allow_an_active_caller_to_switch_sessions()
+    {
+        var backend = new RecordingDockerBackend();
+        using var server = await ShimTestServer.CreateAsync(backend);
+        var client = server.GetTestClient();
+        await RegisterRyukSessionAsync(client, ReaperSessionA);
+        await RegisterRyukSessionAsync(client, ReaperSessionB);
+        using var firstRequest = RyukRequest(
+            HttpMethod.Get,
+            $"/containers/json?filters={ModernSessionFilters(ReaperSessionA)}");
+        Assert.Equal(HttpStatusCode.OK, (await client.SendAsync(firstRequest)).StatusCode);
+
+        using var switchedRequest = RyukRequest(
+            HttpMethod.Get,
+            $"/containers/json?filters={ModernSessionFilters(ReaperSessionB)}");
+        var response = await client.SendAsync(switchedRequest);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    private static DockerResourceSnapshot SessionResource(string id, string session)
+    {
+        return new DockerResourceSnapshot(
+            id,
+            new Dictionary<string, string>
+            {
+                ["org.testcontainers.resource-reaper-session"] = session
+            },
+            CreatedAt: DateTimeOffset.FromUnixTimeSeconds(1783634303));
+    }
+
+    private static async Task RegisterRyukSessionAsync(HttpClient client, string session)
+    {
+        var response = await client.PostAsJsonAsync(
+            $"/containers/create?name=testcontainers-ryuk-{session}",
+            new DockerContainerCreateRequest
+            {
+                Image = "testcontainers/ryuk:0.14.0",
+                Labels = new Dictionary<string, string>
+                {
+                    ["org.testcontainers"] = "true",
+                    ["org.testcontainers.session-id"] = session,
+                    ["org.testcontainers.resource-reaper-session"] = Guid.Empty.ToString("D")
+                }
+            });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    private static string ModernSessionFilters(string session)
+    {
+        var json = $$$"""{"label":{"org.testcontainers.resource-reaper-session={{{session}}}":true}}""";
+        return Uri.EscapeDataString(json);
+    }
+
+    private static HttpRequestMessage RyukRequest(HttpMethod method, string path)
+    {
+        var request = new HttpRequestMessage(method, path);
         request.Headers.Add(HeaderListenerClassifier.ListenerHeaderName, "ryuk");
-
-        var body = await (await client.SendAsync(request)).Content.ReadAsStringAsync();
-
-        Assert.Contains(resourceId, body);
-        Assert.DoesNotContain("other", body);
+        return request;
     }
 
     private sealed class RecordingDockerBackend : IWslcDockerBackend

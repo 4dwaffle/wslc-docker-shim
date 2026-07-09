@@ -5,30 +5,36 @@ namespace Testcontainers.WslcShim.Tests;
 
 public sealed class RestrictedRyukCleanupPolicyTests
 {
+    private const string SessionA = "11111111-1111-1111-1111-111111111111";
+    private const string SessionB = "22222222-2222-2222-2222-222222222222";
+
     [Fact]
-    public void CanDelete_allows_matching_testcontainers_session_resource()
+    public void CanList_allows_resource_reaper_session_filter_without_legacy_labels()
+    {
+        var filters = DockerLabelFilters.FromDockerFiltersQuery(
+            $$$"""{"label":{"org.testcontainers.resource-reaper-session={{{SessionA}}}":true}}""");
+
+        Assert.True(RestrictedRyukCleanupPolicy.CanList(filters));
+    }
+
+    [Fact]
+    public void CanDelete_allows_matching_resource_reaper_session_resource()
     {
         var resource = new DockerResourceSnapshot(
             "container-1",
             new Dictionary<string, string>
             {
-                ["org.testcontainers"] = "true",
-                ["org.testcontainers.session-id"] = "session-a"
+                ["org.testcontainers.resource-reaper-session"] = SessionA
             });
-        var filters = DockerLabelFilters.FromDockerFiltersQuery(
-            """{"label":["org.testcontainers=true","org.testcontainers.session-id=session-a"]}""");
 
-        Assert.True(RestrictedRyukCleanupPolicy.CanDelete(resource, filters));
+        Assert.True(RestrictedRyukCleanupPolicy.CanDelete(resource, SessionA));
     }
 
     [Fact]
     public void CanDelete_refuses_unlabelled_resources()
     {
         var resource = new DockerResourceSnapshot("container-1", new Dictionary<string, string>());
-        var filters = DockerLabelFilters.FromDockerFiltersQuery(
-            """{"label":["org.testcontainers=true","org.testcontainers.session-id=session-a"]}""");
-
-        Assert.False(RestrictedRyukCleanupPolicy.CanDelete(resource, filters));
+        Assert.False(RestrictedRyukCleanupPolicy.CanDelete(resource, SessionA));
     }
 
     [Fact]
@@ -38,12 +44,9 @@ public sealed class RestrictedRyukCleanupPolicyTests
             "container-1",
             new Dictionary<string, string>
             {
-                ["org.testcontainers"] = "true",
-                ["org.testcontainers.session-id"] = "session-b"
+                ["org.testcontainers.resource-reaper-session"] = SessionB
             });
-        var filters = DockerLabelFilters.FromDockerFiltersQuery(
-            """{"label":["org.testcontainers=true","org.testcontainers.session-id=session-a"]}""");
 
-        Assert.False(RestrictedRyukCleanupPolicy.CanDelete(resource, filters));
+        Assert.False(RestrictedRyukCleanupPolicy.CanDelete(resource, SessionA));
     }
 }

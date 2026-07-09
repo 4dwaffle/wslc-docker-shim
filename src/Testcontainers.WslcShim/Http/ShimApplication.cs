@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using System.Globalization;
 using Testcontainers.WslcShim.Docker;
 using Testcontainers.WslcShim.Ryuk;
 using Testcontainers.WslcShim.Wslc;
@@ -21,6 +22,7 @@ public static class ShimApplication
         services.AddSingleton(backend);
         services.AddSingleton(options);
         services.AddSingleton(listenerClassifier);
+        services.AddSingleton<RyukCleanupSessionRegistry>();
     }
 
     public static void MapRoutes(IEndpointRouteBuilder endpoints)
@@ -66,23 +68,26 @@ public static class ShimApplication
             HttpContext context,
             IWslcDockerBackend backend,
             IShimListenerClassifier listenerClassifier,
+            RyukCleanupSessionRegistry cleanupSessions,
             CancellationToken cancellationToken) =>
-            ListResourcesAsync(DockerResourceKind.Container, context, backend, listenerClassifier, cancellationToken));
+            ListResourcesAsync(DockerResourceKind.Container, context, backend, listenerClassifier, cleanupSessions, cancellationToken));
         endpoints.MapDelete($"{prefix}/containers/{{id}}", (
             string id,
             HttpContext context,
             IWslcDockerBackend backend,
             IShimListenerClassifier listenerClassifier,
+            RyukCleanupSessionRegistry cleanupSessions,
             CancellationToken cancellationToken) =>
-            DeleteResourceAsync(DockerResourceKind.Container, id, context, backend, listenerClassifier, cancellationToken));
+            DeleteResourceAsync(DockerResourceKind.Container, id, context, backend, listenerClassifier, cleanupSessions, cancellationToken));
         endpoints.MapPost($"{prefix}/exec/{{id}}/start", StartExecAsync);
         endpoints.MapGet($"{prefix}/exec/{{id}}/json", InspectExecAsync);
         endpoints.MapGet($"{prefix}/networks", (
             HttpContext context,
             IWslcDockerBackend backend,
             IShimListenerClassifier listenerClassifier,
+            RyukCleanupSessionRegistry cleanupSessions,
             CancellationToken cancellationToken) =>
-            ListResourcesAsync(DockerResourceKind.Network, context, backend, listenerClassifier, cancellationToken));
+            ListResourcesAsync(DockerResourceKind.Network, context, backend, listenerClassifier, cleanupSessions, cancellationToken));
         endpoints.MapPost($"{prefix}/networks/create", (
             HttpContext context,
             IWslcDockerBackend backend,
@@ -101,14 +106,16 @@ public static class ShimApplication
             HttpContext context,
             IWslcDockerBackend backend,
             IShimListenerClassifier listenerClassifier,
+            RyukCleanupSessionRegistry cleanupSessions,
             CancellationToken cancellationToken) =>
-            DeleteResourceAsync(DockerResourceKind.Network, id, context, backend, listenerClassifier, cancellationToken));
+            DeleteResourceAsync(DockerResourceKind.Network, id, context, backend, listenerClassifier, cleanupSessions, cancellationToken));
         endpoints.MapGet($"{prefix}/volumes", (
             HttpContext context,
             IWslcDockerBackend backend,
             IShimListenerClassifier listenerClassifier,
+            RyukCleanupSessionRegistry cleanupSessions,
             CancellationToken cancellationToken) =>
-            ListResourcesAsync(DockerResourceKind.Volume, context, backend, listenerClassifier, cancellationToken));
+            ListResourcesAsync(DockerResourceKind.Volume, context, backend, listenerClassifier, cleanupSessions, cancellationToken));
         endpoints.MapPost($"{prefix}/volumes/create", (
             HttpContext context,
             IWslcDockerBackend backend,
@@ -127,14 +134,16 @@ public static class ShimApplication
             HttpContext context,
             IWslcDockerBackend backend,
             IShimListenerClassifier listenerClassifier,
+            RyukCleanupSessionRegistry cleanupSessions,
             CancellationToken cancellationToken) =>
-            DeleteResourceAsync(DockerResourceKind.Volume, id, context, backend, listenerClassifier, cancellationToken));
+            DeleteResourceAsync(DockerResourceKind.Volume, id, context, backend, listenerClassifier, cleanupSessions, cancellationToken));
         endpoints.MapGet($"{prefix}/images/json", (
             HttpContext context,
             IWslcDockerBackend backend,
             IShimListenerClassifier listenerClassifier,
+            RyukCleanupSessionRegistry cleanupSessions,
             CancellationToken cancellationToken) =>
-            ListResourcesAsync(DockerResourceKind.Image, context, backend, listenerClassifier, cancellationToken));
+            ListResourcesAsync(DockerResourceKind.Image, context, backend, listenerClassifier, cleanupSessions, cancellationToken));
         endpoints.MapPost($"{prefix}/images/create", PullImageAsync);
         endpoints.MapGet($"{prefix}/images/{{**id}}", (
             string id,
@@ -148,8 +157,9 @@ public static class ShimApplication
             HttpContext context,
             IWslcDockerBackend backend,
             IShimListenerClassifier listenerClassifier,
+            RyukCleanupSessionRegistry cleanupSessions,
             CancellationToken cancellationToken) =>
-            DeleteResourceAsync(DockerResourceKind.Image, id, context, backend, listenerClassifier, cancellationToken));
+            DeleteResourceAsync(DockerResourceKind.Image, id, context, backend, listenerClassifier, cleanupSessions, cancellationToken));
     }
 
     private static async Task<IResult> CreateContainerAsync(
@@ -157,6 +167,7 @@ public static class ShimApplication
         IWslcDockerBackend backend,
         ShimRuntimeOptions options,
         IShimListenerClassifier listenerClassifier,
+        RyukCleanupSessionRegistry cleanupSessions,
         CancellationToken cancellationToken)
     {
         if (listenerClassifier.Classify(context) == ShimListenerKind.Ryuk)
@@ -185,6 +196,11 @@ public static class ShimApplication
         }
 
         var response = await backend.CreateContainerAsync(mutation.Request, mutation.IsRyuk, cancellationToken);
+        if (mutation.IsRyuk)
+        {
+            cleanupSessions.RegisterRyukContainer(mutation.Request);
+        }
+
         return Results.Json(response, statusCode: StatusCodes.Status201Created);
     }
 
@@ -429,11 +445,12 @@ public static class ShimApplication
         HttpContext context,
         IWslcDockerBackend backend,
         IShimListenerClassifier listenerClassifier,
+        RyukCleanupSessionRegistry cleanupSessions,
         CancellationToken cancellationToken)
     {
         var filters = DockerLabelFilters.FromDockerFiltersQuery(context.Request.Query["filters"]);
         if (listenerClassifier.Classify(context) == ShimListenerKind.Ryuk &&
-            !RestrictedRyukCleanupPolicy.CanList(filters))
+            (!RestrictedRyukCleanupPolicy.CanList(filters) || !cleanupSessions.TryActivate(context, filters)))
         {
             return Results.StatusCode(StatusCodes.Status403Forbidden);
         }
@@ -448,18 +465,19 @@ public static class ShimApplication
         HttpContext context,
         IWslcDockerBackend backend,
         IShimListenerClassifier listenerClassifier,
+        RyukCleanupSessionRegistry cleanupSessions,
         CancellationToken cancellationToken)
     {
         if (listenerClassifier.Classify(context) == ShimListenerKind.Ryuk)
         {
-            var filters = DockerLabelFilters.FromDockerFiltersQuery(context.Request.Query["filters"]);
             var resource = await backend.InspectResourceAsync(kind, id, cancellationToken);
             if (resource is null)
             {
                 return Results.NotFound();
             }
 
-            if (!RestrictedRyukCleanupPolicy.CanDelete(resource, filters))
+            if (!cleanupSessions.TryGetActiveSession(context, out var activeSession) ||
+                !RestrictedRyukCleanupPolicy.CanDelete(resource, activeSession))
             {
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
             }
@@ -493,12 +511,14 @@ public static class ShimApplication
             {
                 resource.Id,
                 Names = new[] { "/" + (resource.Name ?? resource.Id) },
+                Created = GetCreationTime(resource).ToUnixTimeSeconds(),
                 resource.Labels
             }),
             DockerResourceKind.Network => resources.Select(resource => new
             {
                 resource.Id,
                 Name = resource.Name ?? resource.Id,
+                Created = ToDockerTimestamp(GetCreationTime(resource)),
                 resource.Labels
             }),
             DockerResourceKind.Volume => new
@@ -506,6 +526,7 @@ public static class ShimApplication
                 Volumes = resources.Select(resource => new
                 {
                     Name = resource.Name ?? resource.Id,
+                    CreatedAt = ToDockerTimestamp(GetCreationTime(resource)),
                     resource.Labels
                 }),
                 Warnings = Array.Empty<string>()
@@ -514,10 +535,21 @@ public static class ShimApplication
             {
                 resource.Id,
                 RepoTags = resource.Name is null ? Array.Empty<string>() : new[] { resource.Name },
+                Created = GetCreationTime(resource).ToUnixTimeSeconds(),
                 resource.Labels
             }),
             _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
         };
+    }
+
+    private static DateTimeOffset GetCreationTime(DockerResourceSnapshot resource)
+    {
+        return resource.CreatedAt ?? DateTimeOffset.UnixEpoch;
+    }
+
+    private static string ToDockerTimestamp(DateTimeOffset createdAt)
+    {
+        return createdAt.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
     }
 
     private static bool IsRyukListener(HttpContext context, IShimListenerClassifier listenerClassifier)

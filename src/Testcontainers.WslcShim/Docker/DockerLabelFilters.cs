@@ -21,37 +21,51 @@ public sealed class DockerLabelFilters
         }
 
         using var document = JsonDocument.Parse(filtersQuery);
-        if (!document.RootElement.TryGetProperty("label", out var labels) ||
-            labels.ValueKind != JsonValueKind.Array)
+        if (!document.RootElement.TryGetProperty("label", out var labels))
         {
             return Empty;
         }
 
         var requiredLabels = new Dictionary<string, string?>(StringComparer.Ordinal);
-        foreach (var label in labels.EnumerateArray())
+        if (labels.ValueKind == JsonValueKind.Array)
         {
-            if (label.ValueKind != JsonValueKind.String)
+            foreach (var label in labels.EnumerateArray())
             {
-                continue;
+                if (label.ValueKind == JsonValueKind.String)
+                {
+                    AddLabelFilter(requiredLabels, label.GetString());
+                }
             }
-
-            var value = label.GetString();
-            if (string.IsNullOrWhiteSpace(value))
+        }
+        else if (labels.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var label in labels.EnumerateObject())
             {
-                continue;
+                if (label.Value.ValueKind == JsonValueKind.True)
+                {
+                    AddLabelFilter(requiredLabels, label.Name);
+                }
             }
-
-            var equalsIndex = value.IndexOf('=', StringComparison.Ordinal);
-            if (equalsIndex < 0)
-            {
-                requiredLabels[value] = null;
-                continue;
-            }
-
-            requiredLabels[value[..equalsIndex]] = value[(equalsIndex + 1)..];
         }
 
         return new DockerLabelFilters(requiredLabels);
+    }
+
+    private static void AddLabelFilter(IDictionary<string, string?> requiredLabels, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+
+        var equalsIndex = value.IndexOf('=', StringComparison.Ordinal);
+        if (equalsIndex < 0)
+        {
+            requiredLabels[value] = null;
+            return;
+        }
+
+        requiredLabels[value[..equalsIndex]] = value[(equalsIndex + 1)..];
     }
 
     public bool RequiresLabel(string key)

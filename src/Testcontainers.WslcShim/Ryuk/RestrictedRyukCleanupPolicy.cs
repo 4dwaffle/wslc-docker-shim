@@ -4,26 +4,41 @@ namespace Testcontainers.WslcShim.Ryuk;
 
 public static class RestrictedRyukCleanupPolicy
 {
-    private const string TestcontainersLabel = "org.testcontainers";
-    private const string TestcontainersSessionLabel = "org.testcontainers.session-id";
+    public const string ResourceReaperSessionLabel = "org.testcontainers.resource-reaper-session";
+
+    public const string TestcontainersSessionLabel = "org.testcontainers.session-id";
 
     public static bool CanList(DockerLabelFilters filters)
     {
-        return filters.RequiresLabel(TestcontainersLabel, "true") &&
-               !string.IsNullOrWhiteSpace(filters.GetRequiredLabelValue(TestcontainersSessionLabel));
+        return TryGetRequestedSession(filters, out _);
     }
 
-    public static bool CanDelete(DockerResourceSnapshot resource, DockerLabelFilters filters)
+    public static bool TryGetRequestedSession(DockerLabelFilters filters, out string session)
     {
-        if (!CanList(filters))
+        return TryNormalizeSession(filters.GetRequiredLabelValue(ResourceReaperSessionLabel), out session);
+    }
+
+    public static bool CanDelete(DockerResourceSnapshot resource, string? activeSession)
+    {
+        if (!TryNormalizeSession(activeSession, out var normalizedActiveSession) ||
+            !resource.Labels.TryGetValue(ResourceReaperSessionLabel, out var resourceSession) ||
+            !TryNormalizeSession(resourceSession, out var normalizedResourceSession))
         {
             return false;
         }
 
-        var requestedSession = filters.GetRequiredLabelValue(TestcontainersSessionLabel);
-        return resource.Labels.TryGetValue(TestcontainersLabel, out var testcontainers) &&
-               string.Equals(testcontainers, "true", StringComparison.Ordinal) &&
-               resource.Labels.TryGetValue(TestcontainersSessionLabel, out var resourceSession) &&
-               string.Equals(resourceSession, requestedSession, StringComparison.Ordinal);
+        return string.Equals(normalizedResourceSession, normalizedActiveSession, StringComparison.Ordinal);
+    }
+
+    public static bool TryNormalizeSession(string? value, out string session)
+    {
+        if (Guid.TryParse(value, out var sessionId) && sessionId != Guid.Empty)
+        {
+            session = sessionId.ToString("D");
+            return true;
+        }
+
+        session = string.Empty;
+        return false;
     }
 }

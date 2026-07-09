@@ -125,7 +125,8 @@ public sealed class WslcCliDockerBackend : IWslcDockerBackend
         var labels = ExtractLabels(root);
         var resourceId = GetStringProperty(root, "Id") ?? id;
         var name = GetResourceName(kind, root);
-        return new DockerResourceSnapshot(resourceId, labels, name);
+        var createdAt = GetCreationTime(root);
+        return new DockerResourceSnapshot(resourceId, labels, name, createdAt);
     }
 
     public async Task<string?> InspectResourceJsonAsync(
@@ -316,7 +317,7 @@ public sealed class WslcCliDockerBackend : IWslcDockerBackend
         EnsureSuccess(command, result);
 
         var name = request.Name ?? result.StandardOutput.Trim();
-        return new DockerResourceSnapshot(name, request.Labels, name);
+        return new DockerResourceSnapshot(name, request.Labels, name, timeProvider.GetUtcNow());
     }
 
     private static void EnsureSuccess(WslcCommand command, WslcCommandResult result)
@@ -395,6 +396,59 @@ public sealed class WslcCliDockerBackend : IWslcDockerBackend
         return element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
             ? property.GetString()
             : null;
+    }
+
+    private static DateTimeOffset? GetCreationTime(JsonElement element)
+    {
+        foreach (var propertyName in new[] { "Created", "CreatedAt" })
+        {
+            if (!element.TryGetProperty(propertyName, out var property))
+            {
+                continue;
+            }
+
+            if (property.ValueKind == JsonValueKind.Number &&
+                property.TryGetInt64(out var unixSeconds) &&
+                TryFromUnixTimeSeconds(unixSeconds, out var numericTimestamp))
+            {
+                return numericTimestamp;
+            }
+
+            if (property.ValueKind != JsonValueKind.String)
+            {
+                continue;
+            }
+
+            var value = property.GetString();
+            if (long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out unixSeconds) &&
+                TryFromUnixTimeSeconds(unixSeconds, out var stringTimestamp))
+            {
+                return stringTimestamp;
+            }
+
+            if (DateTimeOffset.TryParse(
+                    value,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                    out var timestamp))
+            {
+                return timestamp;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryFromUnixTimeSeconds(long unixSeconds, out DateTimeOffset timestamp)
+    {
+        if (unixSeconds is < -62_135_596_800 or > 253_402_300_799)
+        {
+            timestamp = default;
+            return false;
+        }
+
+        timestamp = DateTimeOffset.FromUnixTimeSeconds(unixSeconds);
+        return true;
     }
 
     private static long? GetInt64Property(JsonElement element, string propertyName)
