@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.AspNetCore.Routing;
 using Testcontainers.WslcShim.Docker;
 using Testcontainers.WslcShim.Http;
 using Testcontainers.WslcShim.Ryuk;
@@ -123,6 +124,60 @@ public sealed class ShimHttpEndpointTests
         var body = await (await client.GetAsync(path)).Content.ReadAsStringAsync();
 
         Assert.Contains(expectedContent, body);
+    }
+
+    [Fact]
+    public async Task Registers_expected_unversioned_and_versioned_route_catalog_without_duplicates()
+    {
+        using var server = await ShimTestServer.CreateAsync(new RecordingDockerBackend());
+        var dataSource = server.Services.GetRequiredService<EndpointDataSource>();
+        var unversionedRoutes = new (string Method, string Pattern)[]
+        {
+            ("GET", "/_ping"),
+            ("GET", "/version"),
+            ("GET", "/info"),
+            ("POST", "/containers/create"),
+            ("POST", "/containers/{id}/start"),
+            ("POST", "/containers/{id}/stop"),
+            ("POST", "/containers/{id}/wait"),
+            ("POST", "/containers/{id}/exec"),
+            ("GET", "/containers/{id}/logs"),
+            ("GET", "/containers/{id}/json"),
+            ("GET", "/containers/json"),
+            ("DELETE", "/containers/{id}"),
+            ("POST", "/exec/{id}/start"),
+            ("GET", "/exec/{id}/json"),
+            ("GET", "/networks"),
+            ("POST", "/networks/create"),
+            ("GET", "/networks/{id}"),
+            ("DELETE", "/networks/{id}"),
+            ("GET", "/volumes"),
+            ("POST", "/volumes/create"),
+            ("GET", "/volumes/{id}"),
+            ("DELETE", "/volumes/{id}"),
+            ("GET", "/images/json"),
+            ("POST", "/images/create"),
+            ("GET", "/images/{**id}"),
+            ("DELETE", "/images/{**id}")
+        };
+        var expectedRoutes = unversionedRoutes
+            .Concat(unversionedRoutes.Select(route =>
+                (route.Method, Pattern: "/{dockerApiVersion}" + route.Pattern)))
+            .OrderBy(route => route.Pattern, StringComparer.Ordinal)
+            .ThenBy(route => route.Method, StringComparer.Ordinal)
+            .ToArray();
+        var actualRoutes = dataSource.Endpoints
+            .OfType<RouteEndpoint>()
+            .SelectMany(endpoint =>
+                endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods.Select(method =>
+                    (Method: method, Pattern: endpoint.RoutePattern.RawText ?? string.Empty)) ?? [])
+            .OrderBy(route => route.Pattern, StringComparer.Ordinal)
+            .ThenBy(route => route.Method, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(52, actualRoutes.Length);
+        Assert.Equal(actualRoutes.Length, actualRoutes.Distinct().Count());
+        Assert.Equal(expectedRoutes, actualRoutes);
     }
 
     [Fact]
