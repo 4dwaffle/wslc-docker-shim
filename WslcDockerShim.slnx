@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Testcontainers.WslcShim/Testcontainers.WslcShim.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Testcontainers.WslcShim.IntegrationTests/Testcontainers.WslcShim.IntegrationTests.csproj" />
+    <Project Path="tests/Testcontainers.WslcShim.Tests/Testcontainers.WslcShim.Tests.csproj" />
+  </Folder>
+</Solution>
