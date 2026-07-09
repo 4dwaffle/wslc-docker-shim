@@ -8,6 +8,12 @@ namespace Testcontainers.WslcShim.IntegrationTests;
 
 public sealed class WslcShimFixture : IAsyncLifetime
 {
+#if DEBUG
+    private const string BuildConfiguration = "Debug";
+#else
+    private const string BuildConfiguration = "Release";
+#endif
+
     private readonly ConcurrentQueue<string> output = new();
     private Process? process;
 
@@ -75,6 +81,8 @@ public sealed class WslcShimFixture : IAsyncLifetime
         startInfo.ArgumentList.Add("run");
         startInfo.ArgumentList.Add("--project");
         startInfo.ArgumentList.Add(projectPath);
+        startInfo.ArgumentList.Add("--configuration");
+        startInfo.ArgumentList.Add(BuildConfiguration);
         startInfo.ArgumentList.Add("--no-build");
         startInfo.ArgumentList.Add("--no-launch-profile");
         startInfo.ArgumentList.Add("--");

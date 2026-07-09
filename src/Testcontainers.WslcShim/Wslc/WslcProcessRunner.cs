@@ -6,7 +6,7 @@ public sealed class WslcProcessRunner : IWslcProcessRunner
 {
     public async Task<WslcCommandResult> RunAsync(WslcCommand command, CancellationToken cancellationToken)
     {
-        var startInfo = new ProcessStartInfo(command.FileName)
+        var startInfo = new ProcessStartInfo(WslcExecutableResolver.Resolve(command.FileName))
         {
             RedirectStandardError = true,
             RedirectStandardOutput = true,
