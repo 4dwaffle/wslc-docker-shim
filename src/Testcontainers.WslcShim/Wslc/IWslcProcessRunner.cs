@@ -1,3 +1,5 @@
+using Testcontainers.WslcShim.Wslc.Models;
+
 namespace Testcontainers.WslcShim.Wslc;
 
 public interface IWslcProcessRunner

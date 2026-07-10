@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Testcontainers.WslcShim.ProcessTestHelper;
 using Testcontainers.WslcShim.Wslc;
+using Testcontainers.WslcShim.Wslc.Models;
 
 namespace Testcontainers.WslcShim.Tests;
 

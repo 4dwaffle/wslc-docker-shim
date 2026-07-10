@@ -8,7 +8,7 @@ using System.Text.Json;
 using DotNet.Testcontainers.Configurations;
 using DotNet.Testcontainers.Containers;
 using Microsoft.Extensions.Logging.Abstractions;
-using Testcontainers.WslcShim.Docker;
+using Testcontainers.WslcShim.Docker.Models;
 
 namespace Testcontainers.WslcShim.IntegrationTests;
 
