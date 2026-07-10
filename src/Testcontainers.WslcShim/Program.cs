@@ -1,6 +1,12 @@
+using Testcontainers.WslcShim.Cli;
 using Testcontainers.WslcShim.Http;
 using Testcontainers.WslcShim.Http.Models;
 using Testcontainers.WslcShim.Wslc;
+
+if (CliHelp.TryWrite(args, Console.Out))
+{
+    return;
+}
 
 var builder = WebApplication.CreateBuilder(args);
 var options = ShimRuntimeOptions.FromConfiguration(builder.Configuration);
