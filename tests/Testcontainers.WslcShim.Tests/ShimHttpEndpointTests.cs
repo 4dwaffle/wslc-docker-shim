@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Buffers.Binary;
+using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
@@ -116,6 +117,35 @@ public sealed class ShimHttpEndpointTests
         Assert.Contains("HostConfig.Privileged", body);
         Assert.Empty(backend.CreatedContainers);
     }
+
+    [Theory]
+    [MemberData(nameof(InvalidContainerCreateRequests))]
+    public async Task Full_listener_returns_docker_error_for_invalid_container_create_requests(
+        string payload,
+        string expectedMessage)
+    {
+        var backend = new RecordingDockerBackend();
+        using var server = await ShimTestServer.CreateAsync(backend);
+        var client = server.GetTestClient();
+        using var content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json");
+
+        var response = await client.PostAsync("/containers/create", content);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains(expectedMessage, body.RootElement.GetProperty("message").GetString());
+        Assert.Empty(backend.CreatedContainers);
+    }
+
+    public static TheoryData<string, string> InvalidContainerCreateRequests => new()
+    {
+        { "{}", "Container image is required" },
+        { """{"Image":"alpine","HostConfig":{"Memory":-1}}""", "Docker create resource values cannot be negative" },
+        { """{"Image":"alpine","HostConfig":{"NanoCpus":1,"CpuCount":1}}""", "NanoCpus and HostConfig.CpuCount cannot both be set" },
+        { """{"Image":"alpine","HostConfig":{"Mounts":[{"Type":"bind","Source":"/tmp"}]}}""", "HostConfig.Mounts[0].Target cannot be empty" },
+        { """{"Image":"alpine","NetworkingConfig":{"EndpointsConfig":{"":{}}}}""", "Docker network name cannot be empty" },
+        { """{"Image":"alpine","HostConfig":{"DeviceRequests":[{"Count":1,"DeviceIDs":["GPU-123"]}]}}""", "GPU request cannot specify both Count and DeviceIDs" }
+    };
 
     [Theory]
     [InlineData("/v1.43/_ping", "OK")]
