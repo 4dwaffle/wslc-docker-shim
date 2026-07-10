@@ -30,6 +30,7 @@ internal static class CreateNetworkEndpoint
         var resource = await backend.CreateResourceAsync(DockerResourceKind.Network, request, cancellationToken);
         return Results.Json(
             new { resource.Id, Warning = string.Empty },
+            DockerEndpointJson.Options,
             statusCode: StatusCodes.Status201Created);
     }
 }

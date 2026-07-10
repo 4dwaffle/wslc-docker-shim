@@ -35,6 +35,6 @@ internal static class ListContainersEndpoint
             Names = new[] { "/" + (resource.Name ?? resource.Id) },
             Created = DockerEndpointTimestamp.GetCreationTime(resource).ToUnixTimeSeconds(),
             resource.Labels
-        }));
+        }), DockerEndpointJson.Options);
     }
 }

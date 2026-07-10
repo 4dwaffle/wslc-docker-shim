@@ -35,6 +35,6 @@ internal static class ListImagesEndpoint
             RepoTags = resource.Name is null ? Array.Empty<string>() : new[] { resource.Name },
             Created = DockerEndpointTimestamp.GetCreationTime(resource).ToUnixTimeSeconds(),
             resource.Labels
-        }));
+        }), DockerEndpointJson.Options);
     }
 }

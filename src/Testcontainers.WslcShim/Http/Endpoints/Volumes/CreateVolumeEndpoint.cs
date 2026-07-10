@@ -30,6 +30,7 @@ internal static class CreateVolumeEndpoint
         var resource = await backend.CreateResourceAsync(DockerResourceKind.Volume, request, cancellationToken);
         return Results.Json(
             new { Name = resource.Name ?? resource.Id },
+            DockerEndpointJson.Options,
             statusCode: StatusCodes.Status201Created);
     }
 }

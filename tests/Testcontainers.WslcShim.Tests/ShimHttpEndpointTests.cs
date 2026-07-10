@@ -1,6 +1,8 @@
 using System.Net;
+﻿using System.Buffers.Binary;
+using System.Net;
 using System.Net.Http.Json;
-using System.Buffers.Binary;
+using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
@@ -413,6 +415,56 @@ public sealed class ShimHttpEndpointTests
             created.Request.Labels["org.testcontainers"] == "true");
     }
 
+    [Fact]
+    public async Task Full_listener_preserves_docker_wire_casing_in_resource_list_responses()
+    {
+        var backend = new RecordingDockerBackend();
+        var labels = new Dictionary<string, string> { ["org.testcontainers"] = "true" };
+        var createdAt = DateTimeOffset.FromUnixTimeSeconds(1783634303);
+        backend.Resources[DockerResourceKind.Container]["container-1"] =
+            new DockerResourceSnapshot("container-1", labels, "container-1", createdAt);
+        backend.Resources[DockerResourceKind.Image]["image-1"] =
+            new DockerResourceSnapshot("image-1", labels, "repository:tag", createdAt);
+        backend.Resources[DockerResourceKind.Network]["network-1"] =
+            new DockerResourceSnapshot("network-1", labels, "network-1", createdAt);
+        backend.Resources[DockerResourceKind.Volume]["volume-1"] =
+            new DockerResourceSnapshot("volume-1", labels, "volume-1", createdAt);
+        using var server = await ShimTestServer.CreateAsync(backend);
+        var client = server.GetTestClient();
+
+        using var containers = JsonDocument.Parse(await (await client.GetAsync("/containers/json")).Content.ReadAsStringAsync());
+        using var images = JsonDocument.Parse(await (await client.GetAsync("/images/json")).Content.ReadAsStringAsync());
+        using var networks = JsonDocument.Parse(await (await client.GetAsync("/networks")).Content.ReadAsStringAsync());
+        using var volumes = JsonDocument.Parse(await (await client.GetAsync("/volumes")).Content.ReadAsStringAsync());
+
+        AssertProperties(containers.RootElement[0], "Id", "Names", "Created", "Labels");
+        AssertProperties(images.RootElement[0], "Id", "RepoTags", "Created", "Labels");
+        AssertProperties(networks.RootElement[0], "Id", "Name", "Created", "Labels");
+        AssertProperties(volumes.RootElement, "Volumes", "Warnings");
+        AssertProperties(volumes.RootElement.GetProperty("Volumes")[0], "Name", "CreatedAt", "Labels");
+    }
+
+    [Fact]
+    public async Task Full_listener_preserves_docker_wire_casing_in_resource_create_responses()
+    {
+        using var server = await ShimTestServer.CreateAsync(new RecordingDockerBackend());
+        var client = server.GetTestClient();
+
+        using var networkResponse = await client.PostAsJsonAsync(
+            "/networks/create",
+            new DockerResourceCreateRequest { Name = "network-a" });
+        using var volumeResponse = await client.PostAsJsonAsync(
+            "/volumes/create",
+            new DockerResourceCreateRequest { Name = "volume-a" });
+        using var network = JsonDocument.Parse(await networkResponse.Content.ReadAsStringAsync());
+        using var volume = JsonDocument.Parse(await volumeResponse.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.Created, networkResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, volumeResponse.StatusCode);
+        AssertProperties(network.RootElement, "Id", "Warning");
+        AssertProperties(volume.RootElement, "Name");
+    }
+
     private const string ReaperSessionA = "11111111-1111-1111-1111-111111111111";
     private const string ReaperSessionB = "22222222-2222-2222-2222-222222222222";
 
@@ -436,10 +488,10 @@ public sealed class ShimHttpEndpointTests
     }
 
     [Theory]
-    [InlineData("/containers/json", "/containers/container-1", DockerResourceKind.Container, "container-1", "\"created\":1783634303")]
-    [InlineData("/networks", "/networks/network-1", DockerResourceKind.Network, "network-1", "\"created\":\"2026-07-09T21:58:23.0000000Z\"")]
-    [InlineData("/volumes", "/volumes/volume-1", DockerResourceKind.Volume, "volume-1", "\"createdAt\":\"2026-07-09T21:58:23.0000000Z\"")]
-    [InlineData("/images/json", "/images/image-1", DockerResourceKind.Image, "image-1", "\"created\":1783634303")]
+    [InlineData("/containers/json", "/containers/container-1", DockerResourceKind.Container, "container-1", "\"Created\":1783634303")]
+    [InlineData("/networks", "/networks/network-1", DockerResourceKind.Network, "network-1", "\"Created\":\"2026-07-09T21:58:23.0000000Z\"")]
+    [InlineData("/volumes", "/volumes/volume-1", DockerResourceKind.Volume, "volume-1", "\"CreatedAt\":\"2026-07-09T21:58:23.0000000Z\"")]
+    [InlineData("/images/json", "/images/image-1", DockerResourceKind.Image, "image-1", "\"Created\":1783634303")]
     public async Task Ryuk_protocol_lists_with_modern_session_filter_then_deletes_by_id_without_filters(
         string listPath,
         string deletePath,
@@ -469,6 +521,7 @@ public sealed class ShimHttpEndpointTests
         Assert.DoesNotContain("other-session", body);
         Assert.DoesNotContain("unlabelled", body);
         Assert.Contains(expectedTimestamp, body);
+        Assert.DoesNotContain(char.ToLowerInvariant(expectedTimestamp[1]) + expectedTimestamp[2..], body);
 
         using var deleteRequest = RyukRequest(HttpMethod.Delete, deletePath);
         var deleteResponse = await client.SendAsync(deleteRequest);
@@ -572,6 +625,17 @@ public sealed class ShimHttpEndpointTests
                 ["org.testcontainers.resource-reaper-session"] = session
             },
             CreatedAt: DateTimeOffset.FromUnixTimeSeconds(1783634303));
+    }
+
+    private static void AssertProperties(JsonElement element, params string[] expectedProperties)
+    {
+        foreach (var property in expectedProperties)
+        {
+            Assert.True(element.TryGetProperty(property, out _), $"Expected property '{property}' was not present.");
+            Assert.False(
+                element.TryGetProperty(char.ToLowerInvariant(property[0]) + property[1..], out _),
+                $"Camel-cased property '{char.ToLowerInvariant(property[0]) + property[1..]}' was present.");
+        }
     }
 
     private static async Task RegisterRyukSessionAsync(HttpClient client, string session)
