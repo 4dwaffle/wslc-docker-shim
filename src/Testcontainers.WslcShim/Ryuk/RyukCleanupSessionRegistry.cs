@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using Microsoft.AspNetCore.Http;
 using Testcontainers.WslcShim.Docker.Models;
 
@@ -8,21 +7,78 @@ public sealed class RyukCleanupSessionRegistry
 {
     private const string RyukContainerNamePrefix = "testcontainers-ryuk-";
     private const string InProcessCaller = "in-process-test-server";
-    private static readonly TimeSpan DefaultCallerSessionLifetime = TimeSpan.FromMinutes(5);
+    private const int DefaultMaximumAllowedSessions = 1024;
+    private const int DefaultMaximumActiveSessions = 1024;
+    private static readonly TimeSpan DefaultSessionLifetime = TimeSpan.FromMinutes(5);
+    private readonly object syncRoot = new();
     private readonly TimeProvider timeProvider;
+    private readonly TimeSpan allowedSessionLifetime;
     private readonly TimeSpan callerSessionLifetime;
-    private readonly ConcurrentDictionary<string, byte> allowedSessions = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, ActiveSession> activeSessions = new(StringComparer.Ordinal);
+    private readonly int maximumAllowedSessions;
+    private readonly int maximumActiveSessions;
+    private readonly Dictionary<string, AllowedSession> allowedSessions = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, ActiveSession> activeSessions = new(StringComparer.Ordinal);
 
     public RyukCleanupSessionRegistry()
-        : this(TimeProvider.System, DefaultCallerSessionLifetime)
+        : this(
+            TimeProvider.System,
+            DefaultSessionLifetime,
+            DefaultSessionLifetime,
+            DefaultMaximumAllowedSessions,
+            DefaultMaximumActiveSessions)
     {
     }
 
     internal RyukCleanupSessionRegistry(TimeProvider timeProvider, TimeSpan callerSessionLifetime)
+        : this(
+            timeProvider,
+            DefaultSessionLifetime,
+            callerSessionLifetime,
+            DefaultMaximumAllowedSessions,
+            DefaultMaximumActiveSessions)
     {
+    }
+
+    internal RyukCleanupSessionRegistry(
+        TimeProvider timeProvider,
+        TimeSpan allowedSessionLifetime,
+        TimeSpan callerSessionLifetime,
+        int maximumAllowedSessions,
+        int maximumActiveSessions)
+    {
+        ArgumentNullException.ThrowIfNull(timeProvider);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(allowedSessionLifetime, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(callerSessionLifetime, TimeSpan.Zero);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maximumAllowedSessions, 0);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maximumActiveSessions, 0);
+
         this.timeProvider = timeProvider;
+        this.allowedSessionLifetime = allowedSessionLifetime;
         this.callerSessionLifetime = callerSessionLifetime;
+        this.maximumAllowedSessions = maximumAllowedSessions;
+        this.maximumActiveSessions = maximumActiveSessions;
+    }
+
+    internal int AllowedSessionCount
+    {
+        get
+        {
+            lock (syncRoot)
+            {
+                return allowedSessions.Count;
+            }
+        }
+    }
+
+    internal int ActiveSessionCount
+    {
+        get
+        {
+            lock (syncRoot)
+            {
+                return activeSessions.Count;
+            }
+        }
     }
 
     public bool RegisterRyukContainer(DockerContainerCreateRequest request)
@@ -32,7 +88,19 @@ public sealed class RyukCleanupSessionRegistry
             return false;
         }
 
-        allowedSessions.TryAdd(session, 0);
+        lock (syncRoot)
+        {
+            var now = timeProvider.GetTimestamp();
+            PruneExpiredSessions(now);
+
+            if (!allowedSessions.ContainsKey(session))
+            {
+                EnsureAllowedSessionCapacity();
+            }
+
+            allowedSessions[session] = new AllowedSession(now);
+        }
+
         return true;
     }
 
@@ -43,36 +111,26 @@ public sealed class RyukCleanupSessionRegistry
 
     public bool TryActivate(string callerIdentity, DockerLabelFilters filters)
     {
-        if (!RestrictedRyukCleanupPolicy.TryGetRequestedSession(filters, out var requestedSession) ||
-            !allowedSessions.ContainsKey(requestedSession))
+        if (!RestrictedRyukCleanupPolicy.TryGetRequestedSession(filters, out var requestedSession))
         {
             return false;
         }
 
-        while (true)
+        lock (syncRoot)
         {
             var now = timeProvider.GetTimestamp();
-            if (!activeSessions.TryGetValue(callerIdentity, out var activeSession))
-            {
-                if (activeSessions.TryAdd(callerIdentity, new ActiveSession(requestedSession, now)))
-                {
-                    return true;
-                }
+            PruneExpiredSessions(now);
 
-                continue;
+            if (!allowedSessions.ContainsKey(requestedSession))
+            {
+                return false;
             }
 
-            if (IsExpired(activeSession, now))
+            if (!activeSessions.TryGetValue(callerIdentity, out var activeSession))
             {
-                if (activeSessions.TryUpdate(
-                        callerIdentity,
-                        new ActiveSession(requestedSession, now),
-                        activeSession))
-                {
-                    return true;
-                }
-
-                continue;
+                EnsureActiveSessionCapacity();
+                activeSessions.Add(callerIdentity, new ActiveSession(requestedSession, now));
+                return true;
             }
 
             if (!string.Equals(activeSession.Session, requestedSession, StringComparison.Ordinal))
@@ -80,13 +138,8 @@ public sealed class RyukCleanupSessionRegistry
                 return false;
             }
 
-            if (activeSessions.TryUpdate(
-                    callerIdentity,
-                    activeSession with { LastSeen = now },
-                    activeSession))
-            {
-                return true;
-            }
+            activeSessions[callerIdentity] = activeSession with { LastSeen = now };
+            return true;
         }
     }
 
@@ -97,20 +150,14 @@ public sealed class RyukCleanupSessionRegistry
 
     public bool TryGetActiveSession(string callerIdentity, out string session)
     {
-        while (activeSessions.TryGetValue(callerIdentity, out var activeSession))
+        lock (syncRoot)
         {
             var now = timeProvider.GetTimestamp();
-            if (IsExpired(activeSession, now))
-            {
-                activeSessions.TryRemove(new KeyValuePair<string, ActiveSession>(callerIdentity, activeSession));
-                break;
-            }
+            PruneExpiredSessions(now);
 
-            if (activeSessions.TryUpdate(
-                    callerIdentity,
-                    activeSession with { LastSeen = now },
-                    activeSession))
+            if (activeSessions.TryGetValue(callerIdentity, out var activeSession))
             {
+                activeSessions[callerIdentity] = activeSession with { LastSeen = now };
                 session = activeSession.Session;
                 return true;
             }
@@ -167,10 +214,118 @@ public sealed class RyukCleanupSessionRegistry
             : null;
     }
 
-    private bool IsExpired(ActiveSession activeSession, long now)
+    private void PruneExpiredSessions(long now)
     {
-        return timeProvider.GetElapsedTime(activeSession.LastSeen, now) >= callerSessionLifetime;
+        var expiredAllowedSessions = new List<string>();
+        foreach (var allowedSession in allowedSessions)
+        {
+            if (IsExpired(allowedSession.Value.RegisteredAt, now, allowedSessionLifetime))
+            {
+                expiredAllowedSessions.Add(allowedSession.Key);
+            }
+        }
+
+        foreach (var session in expiredAllowedSessions)
+        {
+            allowedSessions.Remove(session);
+        }
+
+        var expiredActiveSessions = new List<string>();
+        foreach (var activeSession in activeSessions)
+        {
+            if (IsExpired(activeSession.Value.LastSeen, now, callerSessionLifetime) ||
+                !allowedSessions.ContainsKey(activeSession.Value.Session))
+            {
+                expiredActiveSessions.Add(activeSession.Key);
+            }
+        }
+
+        foreach (var caller in expiredActiveSessions)
+        {
+            activeSessions.Remove(caller);
+        }
     }
+
+    private void EnsureAllowedSessionCapacity()
+    {
+        while (allowedSessions.Count >= maximumAllowedSessions)
+        {
+            var sessionToRemove = FindOldestAllowedSession();
+            allowedSessions.Remove(sessionToRemove);
+        }
+
+        RemoveActiveSessionsWithoutAllowedRegistration();
+    }
+
+    private void EnsureActiveSessionCapacity()
+    {
+        while (activeSessions.Count >= maximumActiveSessions)
+        {
+            activeSessions.Remove(FindOldestActiveSession());
+        }
+    }
+
+    private string FindOldestAllowedSession()
+    {
+        string? oldestSession = null;
+        var oldestTimestamp = long.MaxValue;
+
+        foreach (var allowedSession in allowedSessions)
+        {
+            if (allowedSession.Value.RegisteredAt < oldestTimestamp ||
+                allowedSession.Value.RegisteredAt == oldestTimestamp &&
+                (oldestSession is null || string.CompareOrdinal(allowedSession.Key, oldestSession) < 0))
+            {
+                oldestSession = allowedSession.Key;
+                oldestTimestamp = allowedSession.Value.RegisteredAt;
+            }
+        }
+
+        return oldestSession!;
+    }
+
+    private string FindOldestActiveSession()
+    {
+        string? oldestCaller = null;
+        var oldestTimestamp = long.MaxValue;
+
+        foreach (var activeSession in activeSessions)
+        {
+            if (activeSession.Value.LastSeen < oldestTimestamp ||
+                activeSession.Value.LastSeen == oldestTimestamp &&
+                (oldestCaller is null || string.CompareOrdinal(activeSession.Key, oldestCaller) < 0))
+            {
+                oldestCaller = activeSession.Key;
+                oldestTimestamp = activeSession.Value.LastSeen;
+            }
+        }
+
+        return oldestCaller!;
+    }
+
+    private void RemoveActiveSessionsWithoutAllowedRegistration()
+    {
+        var callersToRemove = new List<string>();
+        foreach (var activeSession in activeSessions)
+        {
+            if (!allowedSessions.ContainsKey(activeSession.Value.Session))
+            {
+                callersToRemove.Add(activeSession.Key);
+            }
+        }
+
+        foreach (var caller in callersToRemove)
+        {
+            activeSessions.Remove(caller);
+        }
+    }
+
+    private bool IsExpired(long timestamp, long now, TimeSpan lifetime)
+    {
+        return timeProvider.GetElapsedTime(timestamp, now) >= lifetime;
+    }
+
+    private sealed record AllowedSession(long RegisteredAt);
 
     private sealed record ActiveSession(string Session, long LastSeen);
 }

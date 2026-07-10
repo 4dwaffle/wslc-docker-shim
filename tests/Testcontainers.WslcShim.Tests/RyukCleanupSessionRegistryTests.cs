@@ -7,6 +7,8 @@ public sealed class RyukCleanupSessionRegistryTests
 {
     private const string SessionA = "11111111-1111-1111-1111-111111111111";
     private const string SessionB = "22222222-2222-2222-2222-222222222222";
+    private const string SessionC = "33333333-3333-3333-3333-333333333333";
+    private const string SessionD = "44444444-4444-4444-4444-444444444444";
 
     [Fact]
     public void TryActivate_requires_a_session_registered_by_a_ryuk_create()
@@ -97,6 +99,122 @@ public sealed class RyukCleanupSessionRegistryTests
         Assert.True(registry.TryActivate("10.0.0.2", FiltersFor(SessionB)));
         Assert.True(registry.TryGetActiveSession("10.0.0.2", out var activeSession));
         Assert.Equal(SessionB, activeSession);
+    }
+
+    [Fact]
+    public void TryActivate_rejects_a_registered_session_after_it_expires()
+    {
+        var timeProvider = new ManualTimeProvider();
+        var registry = new RyukCleanupSessionRegistry(
+            timeProvider,
+            TimeSpan.FromMinutes(1),
+            TimeSpan.FromMinutes(5),
+            maximumAllowedSessions: 10,
+            maximumActiveSessions: 10);
+        registry.RegisterRyukContainer(RyukCreateRequest(SessionA));
+
+        timeProvider.Advance(TimeSpan.FromMinutes(1));
+
+        Assert.False(registry.TryActivate("caller-a", FiltersFor(SessionA)));
+        Assert.Equal(0, registry.AllowedSessionCount);
+    }
+
+    [Fact]
+    public void RegisterRyukContainer_prunes_expired_active_sessions_for_other_callers()
+    {
+        var timeProvider = new ManualTimeProvider();
+        var registry = new RyukCleanupSessionRegistry(
+            timeProvider,
+            TimeSpan.FromMinutes(5),
+            TimeSpan.FromMinutes(1),
+            maximumAllowedSessions: 10,
+            maximumActiveSessions: 10);
+        registry.RegisterRyukContainer(RyukCreateRequest(SessionA));
+        Assert.True(registry.TryActivate("caller-a", FiltersFor(SessionA)));
+
+        timeProvider.Advance(TimeSpan.FromMinutes(1));
+        registry.RegisterRyukContainer(RyukCreateRequest(SessionB));
+
+        Assert.Equal(2, registry.AllowedSessionCount);
+        Assert.Equal(0, registry.ActiveSessionCount);
+    }
+
+    [Fact]
+    public void RegisterRyukContainer_prunes_expired_allowed_sessions_for_other_callers()
+    {
+        var timeProvider = new ManualTimeProvider();
+        var registry = new RyukCleanupSessionRegistry(
+            timeProvider,
+            TimeSpan.FromMinutes(1),
+            TimeSpan.FromMinutes(5),
+            maximumAllowedSessions: 10,
+            maximumActiveSessions: 10);
+        registry.RegisterRyukContainer(RyukCreateRequest(SessionA));
+        Assert.True(registry.TryActivate("caller-a", FiltersFor(SessionA)));
+
+        timeProvider.Advance(TimeSpan.FromMinutes(1));
+        registry.RegisterRyukContainer(RyukCreateRequest(SessionB));
+
+        Assert.Equal(1, registry.AllowedSessionCount);
+        Assert.Equal(0, registry.ActiveSessionCount);
+    }
+
+    [Fact]
+    public void Registry_evicts_oldest_entries_when_capacity_is_reached()
+    {
+        var timeProvider = new ManualTimeProvider();
+        var registry = new RyukCleanupSessionRegistry(
+            timeProvider,
+            TimeSpan.FromHours(1),
+            TimeSpan.FromHours(1),
+            maximumAllowedSessions: 3,
+            maximumActiveSessions: 2);
+        registry.RegisterRyukContainer(RyukCreateRequest(SessionA));
+        timeProvider.Advance(TimeSpan.FromTicks(1));
+        registry.RegisterRyukContainer(RyukCreateRequest(SessionB));
+        timeProvider.Advance(TimeSpan.FromTicks(1));
+        registry.RegisterRyukContainer(RyukCreateRequest(SessionC));
+        timeProvider.Advance(TimeSpan.FromTicks(1));
+        registry.RegisterRyukContainer(RyukCreateRequest(SessionD));
+
+        Assert.Equal(3, registry.AllowedSessionCount);
+        Assert.False(registry.TryActivate("caller-a", FiltersFor(SessionA)));
+
+        timeProvider.Advance(TimeSpan.FromTicks(1));
+        Assert.True(registry.TryActivate("caller-b", FiltersFor(SessionB)));
+        timeProvider.Advance(TimeSpan.FromTicks(1));
+        Assert.True(registry.TryActivate("caller-c", FiltersFor(SessionC)));
+        timeProvider.Advance(TimeSpan.FromTicks(1));
+        Assert.True(registry.TryActivate("caller-d", FiltersFor(SessionD)));
+
+        Assert.Equal(2, registry.ActiveSessionCount);
+        Assert.False(registry.TryGetActiveSession("caller-b", out _));
+        Assert.True(registry.TryGetActiveSession("caller-c", out _));
+        Assert.True(registry.TryGetActiveSession("caller-d", out _));
+    }
+
+    [Fact]
+    public async Task TryActivate_concurrently_binds_a_caller_to_one_session()
+    {
+        var registry = new RyukCleanupSessionRegistry();
+        registry.RegisterRyukContainer(RyukCreateRequest(SessionA));
+        registry.RegisterRyukContainer(RyukCreateRequest(SessionB));
+        using var start = new ManualResetEventSlim(false);
+        var attempts = Enumerable.Range(0, 64)
+            .Select(index => Task.Run(() =>
+            {
+                start.Wait();
+                var session = index % 2 == 0 ? SessionA : SessionB;
+                return (Session: session, Activated: registry.TryActivate("caller-a", FiltersFor(session)));
+            }))
+            .ToArray();
+
+        start.Set();
+        var results = await Task.WhenAll(attempts);
+
+        Assert.True(registry.TryGetActiveSession("caller-a", out var activeSession));
+        Assert.Contains(results, result => result.Activated && result.Session == activeSession);
+        Assert.DoesNotContain(results, result => result.Activated && result.Session != activeSession);
     }
 
     private static DockerContainerCreateRequest RyukCreateRequest(string session)
