@@ -46,6 +46,27 @@ Remove-Item Env:TESTCONTAINERS_RYUK_DISABLED -ErrorAction Ignore
 
 The shim rewrites Ryuk's create request by removing the unusable Docker socket mount and advertising a restricted cleanup listener through `DOCKER_HOST`.
 
+## Watch activity
+
+For an app-like view while exercising the shim, add `--watch`:
+
+```powershell
+dotnet run --project src\Testcontainers.WslcShim -- --watch --wslc-host-address <windows-host-address>
+```
+
+Watch mode prints the configured endpoints and a scrolling, correlated trace:
+
+```text
+12:04:11.231  0001  HTTP  -> FULL POST    /v1.43/containers/create
+12:04:11.238  0001  WSLC  -> create container test-db
+12:04:11.710  0001  WSLC  OK create container test-db  exit=0  472ms
+12:04:11.716  0001  HTTP  <- 201 POST    /v1.43/containers/create  485ms
+```
+
+The trace includes request paths, status codes, durations, and safe operation descriptions. It does not print query strings, request bodies, environment and label values, exec arguments, or WSLc output. Colors are disabled automatically when output is redirected or `NO_COLOR` is set.
+
+`--watch` observes runtime activity; it does not reload the application when source files change.
+
 ## Security and compatibility
 
 The full API listener is intended only for the local Testcontainers process and should remain on loopback. The separate Ryuk listener is reachable by WSLc containers but permits only health/version checks, label-filtered resource lists, and cleanup of resources authorized for the active Testcontainers session. Limit any firewall rule to the WSL/WSLc virtual network and the selected Ryuk port.

@@ -12,6 +12,7 @@
     <Project Path="tests/Testcontainers.WslcShim.IntegrationTests/Testcontainers.WslcShim.IntegrationTests.csproj" />
     <Project Path="tests/Testcontainers.WslcShim.ProcessTestHelper/Testcontainers.WslcShim.ProcessTestHelper.csproj" />
     <Project Path="tests/Testcontainers.WslcShim.Ryuk.Tests/Testcontainers.WslcShim.Ryuk.Tests.csproj" />
+    <Project Path="tests/Testcontainers.WslcShim.Tests/Testcontainers.WslcShim.Tests.csproj" />
     <Project Path="tests/Testcontainers.WslcShim.Wslc.Tests/Testcontainers.WslcShim.Wslc.Tests.csproj" />
   </Folder>
 </Solution>

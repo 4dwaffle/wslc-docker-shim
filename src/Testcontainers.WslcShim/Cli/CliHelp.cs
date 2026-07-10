@@ -33,6 +33,10 @@ internal static class CliHelp
               Port for the restricted Ryuk listener.
               Default: a random available port.
 
+          --watch
+              Print a live terminal trace of Docker requests and translated
+              WSLc operations. This observes activity; it does not reload source.
+
         Security:
           Keep the full API listener on loopback. Expose only the restricted Ryuk
           listener to the WSL/WSLc virtual network.
