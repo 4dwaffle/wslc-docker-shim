@@ -1,3 +1,6 @@
+using Testcontainers.WslcShim.Docker.Enums;
+using Testcontainers.WslcShim.Docker.Models;
+
 namespace Testcontainers.WslcShim.Docker;
 
 public interface IWslcDockerBackend

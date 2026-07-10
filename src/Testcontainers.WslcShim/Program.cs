@@ -1,5 +1,6 @@
 using Testcontainers.WslcShim.Cli;
 using Testcontainers.WslcShim.Http;
+using Testcontainers.WslcShim.Http.Models;
 using Testcontainers.WslcShim.Wslc;
 
 if (CliHelp.TryWrite(args, Console.Out))

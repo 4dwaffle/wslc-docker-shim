@@ -1,4 +1,4 @@
-using Testcontainers.WslcShim.Docker;
+using Testcontainers.WslcShim.Docker.Models;
 
 namespace Testcontainers.WslcShim.Tests;
 
