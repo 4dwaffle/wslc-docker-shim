@@ -6,7 +6,7 @@ internal static class CliHelp
         wslc-docker-shim - Docker Engine API compatibility layer for Testcontainers on WSLc.
 
         Usage:
-          Testcontainers.WslcShim [options]
+          wslc-docker-shim [options]
 
         Options:
           -h, --help
