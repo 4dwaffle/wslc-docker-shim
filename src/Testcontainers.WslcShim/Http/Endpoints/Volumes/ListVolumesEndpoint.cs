@@ -38,6 +38,6 @@ internal static class ListVolumesEndpoint
                 resource.Labels
             }),
             Warnings = Array.Empty<string>()
-        });
+        }, DockerEndpointJson.Options);
     }
 }

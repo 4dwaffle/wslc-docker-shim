@@ -35,6 +35,6 @@ internal static class ListNetworksEndpoint
             Name = resource.Name ?? resource.Id,
             Created = DockerEndpointTimestamp.Format(DockerEndpointTimestamp.GetCreationTime(resource)),
             resource.Labels
-        }));
+        }), DockerEndpointJson.Options);
     }
 }
