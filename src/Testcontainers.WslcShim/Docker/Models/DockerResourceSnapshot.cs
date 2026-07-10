@@ -1,4 +1,4 @@
-namespace Testcontainers.WslcShim.Docker;
+namespace Testcontainers.WslcShim.Docker.Models;
 
 public sealed record DockerResourceSnapshot(
     string Id,

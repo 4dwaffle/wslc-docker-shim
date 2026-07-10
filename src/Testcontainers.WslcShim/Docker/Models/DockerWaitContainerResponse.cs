@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace Testcontainers.WslcShim.Docker;
+namespace Testcontainers.WslcShim.Docker.Models;
 
 public sealed record DockerWaitContainerResponse(
     [property: JsonPropertyName("StatusCode")] long StatusCode,

@@ -1,5 +1,8 @@
 using Microsoft.AspNetCore.Http;
 using Testcontainers.WslcShim.Docker;
+using Testcontainers.WslcShim.Docker.Enums;
+using Testcontainers.WslcShim.Docker.Models;
+using Testcontainers.WslcShim.Http.Endpoints.Enums;
 using Testcontainers.WslcShim.Ryuk;
 
 namespace Testcontainers.WslcShim.Http.Endpoints;
@@ -41,11 +44,4 @@ internal static class RyukCleanupEndpointAuthorization
             ? RyukDeleteAuthorization.Allowed
             : RyukDeleteAuthorization.Forbidden;
     }
-}
-
-internal enum RyukDeleteAuthorization
-{
-    Allowed,
-    NotFound,
-    Forbidden
 }

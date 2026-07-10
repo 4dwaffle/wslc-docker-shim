@@ -8,6 +8,7 @@ using Testcontainers.WslcShim.Http.Endpoints.Images;
 using Testcontainers.WslcShim.Http.Endpoints.Networks;
 using Testcontainers.WslcShim.Http.Endpoints.System;
 using Testcontainers.WslcShim.Http.Endpoints.Volumes;
+using Testcontainers.WslcShim.Http.Models;
 using Testcontainers.WslcShim.Ryuk;
 
 namespace Testcontainers.WslcShim.Http;

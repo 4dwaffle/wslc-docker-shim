@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.Http;
+using Testcontainers.WslcShim.Http.Enums;
+using Testcontainers.WslcShim.Http.Models;
 
 namespace Testcontainers.WslcShim.Http;
 

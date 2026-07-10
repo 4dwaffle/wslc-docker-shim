@@ -1,3 +1,3 @@
-namespace Testcontainers.WslcShim.Wslc;
+namespace Testcontainers.WslcShim.Wslc.Models;
 
 public sealed record WslcCommand(string FileName, IReadOnlyList<string> Arguments);

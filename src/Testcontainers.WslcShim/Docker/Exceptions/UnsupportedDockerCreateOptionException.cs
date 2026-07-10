@@ -1,4 +1,4 @@
-namespace Testcontainers.WslcShim.Docker;
+namespace Testcontainers.WslcShim.Docker.Exceptions;
 
 public sealed class UnsupportedDockerCreateOptionException(IReadOnlyList<string> optionPaths)
     : NotSupportedException(BuildMessage(optionPaths))

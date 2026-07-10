@@ -1,4 +1,4 @@
-namespace Testcontainers.WslcShim.Wslc;
+namespace Testcontainers.WslcShim.Wslc.Models;
 
 internal sealed record WslcExecCacheOptions
 {

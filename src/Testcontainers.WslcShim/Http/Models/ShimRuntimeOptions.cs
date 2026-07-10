@@ -2,9 +2,9 @@ using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using Microsoft.Extensions.Configuration;
-using Testcontainers.WslcShim.Ryuk;
+using Testcontainers.WslcShim.Ryuk.Models;
 
-namespace Testcontainers.WslcShim.Http;
+namespace Testcontainers.WslcShim.Http.Models;
 
 public sealed class ShimRuntimeOptions
 {

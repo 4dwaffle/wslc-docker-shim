@@ -1,4 +1,4 @@
-namespace Testcontainers.WslcShim.Docker;
+namespace Testcontainers.WslcShim.Docker.Enums;
 
 public enum DockerResourceKind
 {

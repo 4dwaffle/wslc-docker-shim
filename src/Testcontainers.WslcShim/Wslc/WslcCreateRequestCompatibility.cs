@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text.Json;
-using Testcontainers.WslcShim.Docker;
+using Testcontainers.WslcShim.Docker.Exceptions;
+using Testcontainers.WslcShim.Docker.Models;
+using Testcontainers.WslcShim.Wslc.Models;
 
 namespace Testcontainers.WslcShim.Wslc;
 
@@ -334,5 +336,3 @@ public static class WslcCreateRequestCompatibility
         }
     }
 }
-
-internal sealed record WslcNetworkSelection(string? Network, IReadOnlyList<string> Aliases);

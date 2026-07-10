@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace Testcontainers.WslcShim.Docker;
+namespace Testcontainers.WslcShim.Docker.Models;
 
 public sealed record DockerContainerCreateRequest
 {

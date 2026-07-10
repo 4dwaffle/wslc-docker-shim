@@ -1,4 +1,4 @@
-namespace Testcontainers.WslcShim.Http;
+namespace Testcontainers.WslcShim.Http.Enums;
 
 public enum ShimListenerKind
 {

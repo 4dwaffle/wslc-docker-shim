@@ -1,6 +1,8 @@
-using Testcontainers.WslcShim.Docker;
-using Testcontainers.WslcShim.Wslc;
 using System.Text.Json;
+using Testcontainers.WslcShim.Docker.Enums;
+using Testcontainers.WslcShim.Docker.Models;
+using Testcontainers.WslcShim.Wslc;
+using Testcontainers.WslcShim.Wslc.Models;
 
 namespace Testcontainers.WslcShim.Tests;
 

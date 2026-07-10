@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace Testcontainers.WslcShim.Docker;
+namespace Testcontainers.WslcShim.Docker.Models;
 
 public sealed class DockerLabelFilters
 {

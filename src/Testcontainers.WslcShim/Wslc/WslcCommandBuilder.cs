@@ -1,5 +1,7 @@
 using System.Globalization;
-using Testcontainers.WslcShim.Docker;
+using Testcontainers.WslcShim.Docker.Enums;
+using Testcontainers.WslcShim.Docker.Models;
+using Testcontainers.WslcShim.Wslc.Models;
 
 namespace Testcontainers.WslcShim.Wslc;
 

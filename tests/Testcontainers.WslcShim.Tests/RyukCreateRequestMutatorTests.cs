@@ -1,6 +1,7 @@
 using System.Text.Json;
-using Testcontainers.WslcShim.Docker;
+using Testcontainers.WslcShim.Docker.Models;
 using Testcontainers.WslcShim.Ryuk;
+using Testcontainers.WslcShim.Ryuk.Models;
 using Testcontainers.WslcShim.Wslc;
 
 namespace Testcontainers.WslcShim.Tests;

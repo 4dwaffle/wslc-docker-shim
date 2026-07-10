@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Testcontainers.WslcShim.Docker;
+using Testcontainers.WslcShim.Docker.Models;
 
 namespace Testcontainers.WslcShim.Http.Endpoints.Containers;
 

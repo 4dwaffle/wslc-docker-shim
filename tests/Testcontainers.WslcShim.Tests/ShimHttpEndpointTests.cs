@@ -8,8 +8,12 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.AspNetCore.Routing;
 using Testcontainers.WslcShim.Docker;
+using Testcontainers.WslcShim.Docker.Enums;
+using Testcontainers.WslcShim.Docker.Models;
 using Testcontainers.WslcShim.Http;
+using Testcontainers.WslcShim.Http.Models;
 using Testcontainers.WslcShim.Ryuk;
+using Testcontainers.WslcShim.Ryuk.Models;
 
 namespace Testcontainers.WslcShim.Tests;
 
