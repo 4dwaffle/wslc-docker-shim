@@ -130,6 +130,21 @@ public sealed class ShimHttpEndpointTests
         Assert.Contains(expectedContent, body);
     }
 
+    [Theory]
+    [InlineData("/not-a-version/_ping")]
+    [InlineData("/1.43/_ping")]
+    [InlineData("/vfoo/_ping")]
+    [InlineData("/v1/_ping")]
+    public async Task Routes_reject_invalid_docker_api_version_prefixes(string path)
+    {
+        using var server = await ShimTestServer.CreateAsync(new RecordingDockerBackend());
+        var client = server.GetTestClient();
+
+        var response = await client.GetAsync(path);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
     [Fact]
     public async Task Registers_expected_unversioned_and_versioned_route_catalog_without_duplicates()
     {
@@ -166,7 +181,7 @@ public sealed class ShimHttpEndpointTests
         };
         var expectedRoutes = unversionedRoutes
             .Concat(unversionedRoutes.Select(route =>
-                (route.Method, Pattern: "/{dockerApiVersion}" + route.Pattern)))
+                (route.Method, Pattern: "/{dockerApiVersion:regex(^v\\d+\\.\\d+$)}" + route.Pattern)))
             .OrderBy(route => route.Pattern, StringComparer.Ordinal)
             .ThenBy(route => route.Method, StringComparer.Ordinal)
             .ToArray();

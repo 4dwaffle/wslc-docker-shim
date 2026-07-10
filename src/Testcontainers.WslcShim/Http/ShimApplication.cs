@@ -31,7 +31,7 @@ public static class ShimApplication
     public static void MapRoutes(IEndpointRouteBuilder endpoints)
     {
         MapEndpoints(endpoints);
-        MapEndpoints(endpoints.MapGroup("/{dockerApiVersion}"));
+        MapEndpoints(endpoints.MapGroup("/{dockerApiVersion:regex(^v\\d+\\.\\d+$)}"));
     }
 
     private static void MapEndpoints(IEndpointRouteBuilder endpoints)

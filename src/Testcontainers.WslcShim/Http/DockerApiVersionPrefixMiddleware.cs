@@ -7,7 +7,7 @@ namespace Testcontainers.WslcShim.Http;
 public static class DockerApiVersionPrefixMiddleware
 {
     private static readonly Regex VersionPrefix = new(
-        "^/v\\d+(?:\\.\\d+)?(?=/|$)",
+        "^/v\\d+\\.\\d+(?=/|$)",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     public static IApplicationBuilder UseDockerApiVersionPrefix(this IApplicationBuilder app)
