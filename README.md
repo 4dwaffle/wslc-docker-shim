@@ -24,7 +24,7 @@ dotnet run --project src\Testcontainers.WslcShim -- --help
 
 ## Configure Testcontainers
 
-Create `.testcontainers.properties` in your Windows user profile (`C:\Users\{user}\.testcontainers.properties`) with:
+Create `.testcontainers.properties` in your Windows user profile (for example, `%USERPROFILE%\.testcontainers.properties`) with:
 
 ```properties
 docker.host=tcp://127.0.0.1:23755
