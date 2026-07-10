@@ -1,10 +1,17 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/Testcontainers.WslcShim.Docker/Testcontainers.WslcShim.Docker.csproj" />
+    <Project Path="src/Testcontainers.WslcShim.Http/Testcontainers.WslcShim.Http.csproj" />
+    <Project Path="src/Testcontainers.WslcShim.Ryuk/Testcontainers.WslcShim.Ryuk.csproj" />
     <Project Path="src/Testcontainers.WslcShim/Testcontainers.WslcShim.csproj" />
+    <Project Path="src/Testcontainers.WslcShim.Wslc/Testcontainers.WslcShim.Wslc.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Testcontainers.WslcShim.Docker.Tests/Testcontainers.WslcShim.Docker.Tests.csproj" />
+    <Project Path="tests/Testcontainers.WslcShim.Http.Tests/Testcontainers.WslcShim.Http.Tests.csproj" />
     <Project Path="tests/Testcontainers.WslcShim.IntegrationTests/Testcontainers.WslcShim.IntegrationTests.csproj" />
     <Project Path="tests/Testcontainers.WslcShim.ProcessTestHelper/Testcontainers.WslcShim.ProcessTestHelper.csproj" />
-    <Project Path="tests/Testcontainers.WslcShim.Tests/Testcontainers.WslcShim.Tests.csproj" />
+    <Project Path="tests/Testcontainers.WslcShim.Ryuk.Tests/Testcontainers.WslcShim.Ryuk.Tests.csproj" />
+    <Project Path="tests/Testcontainers.WslcShim.Wslc.Tests/Testcontainers.WslcShim.Wslc.Tests.csproj" />
   </Folder>
 </Solution>

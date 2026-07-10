@@ -78,7 +78,10 @@ Completed exec inspection state is retained for five minutes, subject to a hard 
 Run the unit and protocol-level endpoint tests without requiring WSLc:
 
 ```powershell
-dotnet test tests\Testcontainers.WslcShim.Tests\Testcontainers.WslcShim.Tests.csproj
+dotnet test tests\Testcontainers.WslcShim.Docker.Tests\Testcontainers.WslcShim.Docker.Tests.csproj
+dotnet test tests\Testcontainers.WslcShim.Wslc.Tests\Testcontainers.WslcShim.Wslc.Tests.csproj
+dotnet test tests\Testcontainers.WslcShim.Ryuk.Tests\Testcontainers.WslcShim.Ryuk.Tests.csproj
+dotnet test tests\Testcontainers.WslcShim.Http.Tests\Testcontainers.WslcShim.Http.Tests.csproj
 ```
 
 The integration suite starts the production two-listener shim and real Testcontainers/Ryuk workloads through WSLc. It requires WSLc, network access to pull the MSSQL and Ryuk images, and a host address reachable from WSLc. Override address detection when necessary:
