@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 using Microsoft.AspNetCore.Http;
-using Testcontainers.WslcShim.Docker;
+using Testcontainers.WslcShim.Docker.Models;
 
 namespace Testcontainers.WslcShim.Ryuk;
 

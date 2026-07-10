@@ -1,4 +1,5 @@
 using Testcontainers.WslcShim.Http;
+using Testcontainers.WslcShim.Http.Models;
 using Testcontainers.WslcShim.Wslc;
 
 var builder = WebApplication.CreateBuilder(args);
