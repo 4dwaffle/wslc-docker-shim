@@ -54,10 +54,22 @@ public sealed class WslcProcessRunnerTests
         {
             if (File.Exists(pidFile))
             {
-                var lines = await File.ReadAllLinesAsync(pidFile);
-                if (lines.Length == 2 && lines.All(line => int.TryParse(line, out _)))
+                try
                 {
-                    return lines.Select(int.Parse).ToArray();
+                    // Use FileShare.ReadWrite so that the writer process (which opens with
+                    // FileShare.Read) does not block us from reading concurrently on Windows.
+                    using var stream = new FileStream(pidFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, bufferSize: 1, useAsync: true);
+                    using var reader = new StreamReader(stream);
+                    var content = await reader.ReadToEndAsync();
+                    var lines = content.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+                    if (lines.Length == 2 && lines.All(line => int.TryParse(line, out _)))
+                    {
+                        return lines.Select(int.Parse).ToArray();
+                    }
+                }
+                catch (IOException)
+                {
+                    // File may be temporarily locked; retry.
                 }
             }
 
