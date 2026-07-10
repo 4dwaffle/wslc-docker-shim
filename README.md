@@ -52,7 +52,6 @@ The full API listener is intended only for the local Testcontainers process and 
 
 The full listener can create and remove resources, so do not bind it to `0.0.0.0` or expose it to the local network. The restricted listener rejects create, start, inspect, logs, exec, pull, and unlabelled cleanup requests.
 
-<<<<<<< HEAD
 ## Listener security boundary
 
 The full listener is intended for the local Testcontainers process. The restricted listener is advertised only to Ryuk and exposes:
@@ -104,6 +103,3 @@ dotnet test tests\Testcontainers.WslcShim.IntegrationTests\Testcontainers.WslcSh
 ```
 
 The integration tests control the Testcontainers settings they require. Avoid running unrelated Testcontainers workloads against the same shim ports while the suite is active.
-=======
-The shim supports the image, container, exec, network, and volume operations needed by Testcontainers where WSLc can represent them. Docker API version prefixes such as `/v1.43` are accepted. Logs and exec output are buffered rather than streamed; build, attach, archive, events, stats, and other Docker Engine features are not implemented.
->>>>>>> origin/main
