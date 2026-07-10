@@ -4,6 +4,7 @@ using Testcontainers.MsSql;
 namespace Testcontainers.WslcShim.IntegrationTests;
 
 [Collection(WslcShimCollection.Name)]
+[Trait("Category", "Integration")]
 public sealed class MsSqlContainerThroughShimTests(WslcShimFixture shim)
 {
     [Fact]
