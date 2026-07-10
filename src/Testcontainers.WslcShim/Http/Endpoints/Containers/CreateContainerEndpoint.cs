@@ -41,13 +41,15 @@ internal static class CreateContainerEndpoint
         var mutation = RyukCreateRequestMutator.MutateIfRyuk(requestWithName, options.RyukEndpoint);
         try
         {
-            WslcCreateRequestCompatibility.Validate(mutation.Request);
+            ValidateCreateRequest(mutation.Request);
+        }
+        catch (ArgumentException exception)
+        {
+            return CreateBadRequestResponse(exception.Message);
         }
         catch (UnsupportedDockerCreateOptionException exception)
         {
-            return Results.Json(
-                new { message = exception.Message },
-                statusCode: StatusCodes.Status400BadRequest);
+            return CreateBadRequestResponse(exception.Message);
         }
 
         var response = await backend.CreateContainerAsync(mutation.Request, mutation.IsRyuk, cancellationToken);
@@ -57,6 +59,23 @@ internal static class CreateContainerEndpoint
         }
 
         return Results.Json(response, statusCode: StatusCodes.Status201Created);
+    }
+
+    private static void ValidateCreateRequest(DockerContainerCreateRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Image))
+        {
+            throw new ArgumentException("Container image is required.", nameof(request));
+        }
+
+        WslcCreateRequestCompatibility.Validate(request);
+    }
+
+    private static IResult CreateBadRequestResponse(string message)
+    {
+        return Results.Json(
+            new { message },
+            statusCode: StatusCodes.Status400BadRequest);
     }
 
     private static DockerContainerCreateRequest ApplyCreateName(
