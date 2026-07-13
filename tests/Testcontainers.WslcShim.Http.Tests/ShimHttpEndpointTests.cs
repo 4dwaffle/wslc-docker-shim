@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Buffers.Binary;
+using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
@@ -149,6 +150,8 @@ public sealed class ShimHttpEndpointTests
             ("POST", "/containers/{id}/wait"),
             ("POST", "/containers/{id}/exec"),
             ("GET", "/containers/{id}/logs"),
+            ("HEAD", "/containers/{id}/archive"),
+            ("PUT", "/containers/{id}/archive"),
             ("GET", "/containers/{id}/json"),
             ("GET", "/containers/json"),
             ("DELETE", "/containers/{id}"),
@@ -157,6 +160,8 @@ public sealed class ShimHttpEndpointTests
             ("GET", "/networks"),
             ("POST", "/networks/create"),
             ("GET", "/networks/{id}"),
+            ("POST", "/networks/{id}/connect"),
+            ("POST", "/networks/{id}/disconnect"),
             ("DELETE", "/networks/{id}"),
             ("GET", "/volumes"),
             ("POST", "/volumes/create"),
@@ -182,7 +187,7 @@ public sealed class ShimHttpEndpointTests
             .ThenBy(route => route.Method, StringComparer.Ordinal)
             .ToArray();
 
-        Assert.Equal(52, actualRoutes.Length);
+        Assert.Equal(60, actualRoutes.Length);
         Assert.Equal(actualRoutes.Length, actualRoutes.Distinct().Count());
         Assert.Equal(expectedRoutes, actualRoutes);
     }
@@ -252,6 +257,19 @@ public sealed class ShimHttpEndpointTests
     }
 
     [Fact]
+    public async Task Full_listener_stops_containers_with_docker_timeout_query()
+    {
+        var backend = new RecordingDockerBackend();
+        using var server = await ShimTestServer.CreateAsync(backend);
+        var client = server.GetTestClient();
+
+        var response = await client.PostAsync("/containers/container-1/stop?t=10", null);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Equal(["container-1"], backend.StoppedContainers);
+    }
+
+    [Fact]
     public async Task Full_listener_inspects_containers()
     {
         var backend = new RecordingDockerBackend();
@@ -263,6 +281,86 @@ public sealed class ShimHttpEndpointTests
         var body = await (await client.GetAsync("/containers/container-1/json")).Content.ReadAsStringAsync();
 
         Assert.Contains("container-1", body);
+    }
+
+    [Theory]
+    [InlineData("/v1.55/containers/missing/json", "No such container: missing")]
+    [InlineData("/v1.55/images/missing/json", "No such image: missing")]
+    [InlineData("/v1.55/networks/missing", "network missing not found")]
+    [InlineData("/v1.55/volumes/missing", "get missing: no such volume")]
+    public async Task Full_listener_returns_docker_not_found_errors_for_missing_resources(
+        string path,
+        string expectedMessage)
+    {
+        using var server = await ShimTestServer.CreateAsync(new RecordingDockerBackend());
+        var response = await server.GetTestClient().GetAsync(path);
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
+        Assert.Contains(expectedMessage, body);
+    }
+
+    [Fact]
+    public async Task Aspire_container_archive_probe_and_upload_are_accepted()
+    {
+        var backend = new RecordingDockerBackend();
+        backend.Resources[DockerResourceKind.Container]["container-1"] = new DockerResourceSnapshot(
+            "container-1",
+            new Dictionary<string, string>());
+        using var server = await ShimTestServer.CreateAsync(backend);
+        var client = server.GetTestClient();
+
+        using var headRequest = new HttpRequestMessage(
+            HttpMethod.Head,
+            "/v1.55/containers/container-1/archive?path=%2Fusr%2Flib%2Fssl%2Faspire%2Fprivate");
+        var headResponse = await client.SendAsync(headRequest);
+        var putResponse = await client.PutAsync(
+            "/v1.55/containers/container-1/archive?path=%2Fusr%2Flib%2Fssl%2Faspire%2Fprivate",
+            new ByteArrayContent([1, 2, 3]));
+
+        Assert.Equal(HttpStatusCode.OK, headResponse.StatusCode);
+        Assert.True(headResponse.Headers.Contains("X-Docker-Container-Path-Stat"));
+        Assert.Equal(HttpStatusCode.OK, putResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task Aspire_can_inspect_the_implicit_bridge_network()
+    {
+        using var server = await ShimTestServer.CreateAsync(new RecordingDockerBackend());
+        var response = await server.GetTestClient().GetAsync("/v1.55/networks/bridge");
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("bridge", document.RootElement.GetProperty("Name").GetString());
+        Assert.Equal("bridge", document.RootElement.GetProperty("Driver").GetString());
+    }
+
+    [Fact]
+    public async Task Aspire_can_connect_its_implicit_application_network()
+    {
+        var backend = new RecordingDockerBackend();
+        backend.Resources[DockerResourceKind.Container]["container-1"] = new DockerResourceSnapshot(
+            "container-1",
+            new Dictionary<string, string>(),
+            "worker");
+        using var server = await ShimTestServer.CreateAsync(backend);
+        var client = server.GetTestClient();
+
+        var connectResponse = await client.PostAsJsonAsync(
+            "/v1.55/networks/aspire-container-network/connect",
+            new DockerNetworkConnectRequest
+            {
+                Container = "container-1",
+                EndpointConfig = new DockerEndpointSettings { Aliases = ["worker"] }
+            });
+        using var networkDocument = JsonDocument.Parse(
+            await (await client.GetAsync("/networks/aspire-container-network")).Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.OK, connectResponse.StatusCode);
+        Assert.True(networkDocument.RootElement
+            .GetProperty("Containers")
+            .TryGetProperty("container-1", out _));
     }
 
     [Fact]
@@ -384,8 +482,161 @@ public sealed class ShimHttpEndpointTests
 
         var response = await client.PostAsync("/images/create?fromImage=redis&tag=7", null);
 
+        var body = await response.Content.ReadAsStringAsync();
+
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
+        Assert.EndsWith("\n", body, StringComparison.Ordinal);
+        Assert.Contains("\"status\":\"Pulled redis:7\"", body);
         Assert.Equal(["redis:7"], backend.PulledImages);
+    }
+
+    [Fact]
+    public async Task Aspire_network_operations_overlay_container_and_network_inspection()
+    {
+        var backend = new RecordingDockerBackend();
+        SeedAspireResources(backend);
+        using var server = await ShimTestServer.CreateAsync(backend);
+        var client = server.GetTestClient();
+
+        var disconnectResponse = await client.PostAsJsonAsync(
+            "/networks/bridge/disconnect",
+            new DockerNetworkDisconnectRequest { Container = "container-1", Force = true });
+        var connectResponse = await client.PostAsJsonAsync(
+            "/v1.43/networks/aspire-network/connect",
+            new DockerNetworkConnectRequest
+            {
+                Container = "container-1",
+                EndpointConfig = new DockerEndpointSettings
+                {
+                    Aliases = ["worker", "worker.dev.internal"]
+                }
+            });
+
+        Assert.Equal(HttpStatusCode.OK, disconnectResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, connectResponse.StatusCode);
+
+        using var containerDocument = JsonDocument.Parse(
+            await (await client.GetAsync("/containers/container-1/json")).Content.ReadAsStringAsync());
+        var networks = containerDocument.RootElement
+            .GetProperty("NetworkSettings")
+            .GetProperty("Networks");
+        Assert.False(networks.TryGetProperty("bridge", out _));
+        var aspireNetwork = networks.GetProperty("aspire-network");
+        Assert.Equal("aspire-network", aspireNetwork.GetProperty("NetworkID").GetString());
+        Assert.Equal(
+            ["worker", "worker.dev.internal"],
+            aspireNetwork.GetProperty("Aliases").EnumerateArray().Select(alias => alias.GetString()!).ToArray());
+
+        using var networkDocument = JsonDocument.Parse(
+            await (await client.GetAsync("/networks/aspire-network")).Content.ReadAsStringAsync());
+        var attachedContainer = networkDocument.RootElement
+            .GetProperty("Containers")
+            .GetProperty("container-1");
+        Assert.Equal("worker", attachedContainer.GetProperty("Name").GetString());
+        Assert.Equal(string.Empty, attachedContainer.GetProperty("IPv4Address").GetString());
+    }
+
+    [Fact]
+    public async Task Aspire_network_operations_are_idempotent_and_container_delete_cleans_up_attachments()
+    {
+        var backend = new RecordingDockerBackend();
+        SeedAspireResources(backend);
+        using var server = await ShimTestServer.CreateAsync(backend);
+        var client = server.GetTestClient();
+
+        await ConnectAspireNetworkAsync(client, "old-alias");
+        await ConnectAspireNetworkAsync(client, "new-alias");
+
+        using (var containerDocument = JsonDocument.Parse(
+                   await (await client.GetAsync("/containers/container-1/json")).Content.ReadAsStringAsync()))
+        {
+            var aliases = containerDocument.RootElement
+                .GetProperty("NetworkSettings")
+                .GetProperty("Networks")
+                .GetProperty("aspire-network")
+                .GetProperty("Aliases")
+                .EnumerateArray()
+                .Select(alias => alias.GetString()!)
+                .ToArray();
+            Assert.Equal(["new-alias"], aliases);
+        }
+
+        var disconnectRequest = new DockerNetworkDisconnectRequest { Container = "container-1" };
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await client.PostAsJsonAsync("/networks/aspire-network/disconnect", disconnectRequest)).StatusCode);
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await client.PostAsJsonAsync("/networks/aspire-network/disconnect", disconnectRequest)).StatusCode);
+
+        await ConnectAspireNetworkAsync(client, "final-alias");
+        Assert.Equal(
+            HttpStatusCode.NoContent,
+            (await client.DeleteAsync("/containers/container-1?force=1&v=1")).StatusCode);
+
+        using var networkDocument = JsonDocument.Parse(
+            await (await client.GetAsync("/networks/aspire-network")).Content.ReadAsStringAsync());
+        Assert.Empty(networkDocument.RootElement.GetProperty("Containers").EnumerateObject());
+    }
+
+    [Fact]
+    public async Task Aspire_network_delete_cleans_up_container_attachment_metadata()
+    {
+        var backend = new RecordingDockerBackend();
+        SeedAspireResources(backend);
+        using var server = await ShimTestServer.CreateAsync(backend);
+        var client = server.GetTestClient();
+
+        await ConnectAspireNetworkAsync(client, "worker");
+        Assert.Equal(HttpStatusCode.NoContent, (await client.DeleteAsync("/networks/aspire-network")).StatusCode);
+
+        using var containerDocument = JsonDocument.Parse(
+            await (await client.GetAsync("/containers/container-1/json")).Content.ReadAsStringAsync());
+        var networks = containerDocument.RootElement
+            .GetProperty("NetworkSettings")
+            .GetProperty("Networks");
+        Assert.False(networks.TryGetProperty("aspire-network", out _));
+    }
+
+    [Fact]
+    public async Task Aspire_network_connect_validates_required_resources()
+    {
+        var backend = new RecordingDockerBackend();
+        SeedAspireResources(backend);
+        using var server = await ShimTestServer.CreateAsync(backend);
+        var client = server.GetTestClient();
+
+        var missingContainerValue = await client.PostAsJsonAsync(
+            "/networks/aspire-network/connect",
+            new DockerNetworkConnectRequest());
+        var unknownContainer = await client.PostAsJsonAsync(
+            "/networks/aspire-network/connect",
+            new DockerNetworkConnectRequest { Container = "missing" });
+        var unknownNetwork = await client.PostAsJsonAsync(
+            "/networks/missing/connect",
+            new DockerNetworkConnectRequest { Container = "container-1" });
+
+        Assert.Equal(HttpStatusCode.BadRequest, missingContainerValue.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, unknownContainer.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, unknownNetwork.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("/networks/aspire-network/connect")]
+    [InlineData("/networks/aspire-network/disconnect")]
+    public async Task Ryuk_listener_refuses_aspire_network_operations(string path)
+    {
+        var backend = new RecordingDockerBackend();
+        SeedAspireResources(backend);
+        using var server = await ShimTestServer.CreateAsync(backend);
+        var client = server.GetTestClient();
+        using var request = RyukRequest(HttpMethod.Post, path);
+        request.Content = JsonContent.Create(new { Container = "container-1" });
+
+        var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     [Theory]
@@ -577,6 +828,47 @@ public sealed class ShimHttpEndpointTests
             CreatedAt: DateTimeOffset.FromUnixTimeSeconds(1783634303));
     }
 
+    private static void SeedAspireResources(RecordingDockerBackend backend)
+    {
+        backend.Resources[DockerResourceKind.Container]["container-1"] = new DockerResourceSnapshot(
+            "container-1",
+            new Dictionary<string, string>(),
+            "worker");
+        backend.Resources[DockerResourceKind.Network]["aspire-network"] = new DockerResourceSnapshot(
+            "aspire-network",
+            new Dictionary<string, string>(),
+            "aspire-network");
+        backend.InspectJson[(DockerResourceKind.Container, "container-1")] =
+            """
+            {
+              "Id": "container-1",
+              "Name": "worker",
+              "NetworkSettings": {
+                "Networks": {
+                  "bridge": {
+                    "Aliases": [],
+                    "IPAddress": ""
+                  }
+                }
+              }
+            }
+            """;
+        backend.InspectJson[(DockerResourceKind.Network, "aspire-network")] =
+            """{"Id":"aspire-network","Name":"aspire-network","Containers":{}}""";
+    }
+
+    private static async Task ConnectAspireNetworkAsync(HttpClient client, string alias)
+    {
+        var response = await client.PostAsJsonAsync(
+            "/networks/aspire-network/connect",
+            new DockerNetworkConnectRequest
+            {
+                Container = "container-1",
+                EndpointConfig = new DockerEndpointSettings { Aliases = [alias] }
+            });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
     private static async Task RegisterRyukSessionAsync(HttpClient client, string session)
     {
         var response = await client.PostAsJsonAsync(
@@ -627,6 +919,8 @@ public sealed class ShimHttpEndpointTests
         public List<(DockerResourceKind Kind, string Id)> DeletedResources { get; } = [];
 
         public List<(DockerResourceKind Kind, string Id)> StartedResources { get; } = [];
+
+        public List<string> StoppedContainers { get; } = [];
 
         public List<string> WaitedContainers { get; } = [];
 
@@ -707,6 +1001,7 @@ public sealed class ShimHttpEndpointTests
 
         public Task StopContainerAsync(string id, CancellationToken cancellationToken)
         {
+            StoppedContainers.Add(id);
             return Task.CompletedTask;
         }
 

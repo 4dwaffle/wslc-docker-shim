@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using System.Text.Json;
 using Testcontainers.WslcShim.Docker;
 
 namespace Testcontainers.WslcShim.Http.Endpoints.Images;
@@ -32,6 +33,7 @@ internal static class PullImageEndpoint
         var tag = context.Request.Query["tag"].ToString();
         var image = string.IsNullOrWhiteSpace(tag) ? fromImage : $"{fromImage}:{tag}";
         await backend.PullImageAsync(image, cancellationToken);
-        return Results.Json(new { status = $"Pulled {image}" });
+        var status = JsonSerializer.Serialize(new { status = $"Pulled {image}" }) + "\n";
+        return Results.Text(status, "application/json");
     }
 }

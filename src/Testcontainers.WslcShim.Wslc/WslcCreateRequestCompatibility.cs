@@ -152,7 +152,10 @@ public static class WslcCreateRequestCompatibility
     {
         var endpoint = request.NetworkingConfig.EndpointsConfig.SingleOrDefault();
         var networkMode = NormalizeNetworkMode(request.HostConfig.NetworkMode);
-        var network = IsDefaultNetworkMode(networkMode) ? endpoint.Key : networkMode;
+        var endpointNetwork = NormalizeNetworkMode(endpoint.Key);
+        var network = IsDefaultNetworkMode(networkMode)
+            ? IsDefaultNetworkMode(endpointNetwork) ? null : endpointNetwork
+            : networkMode;
         var aliases = endpoint.Value?.Aliases
             .Concat(endpoint.Value.DnsNames)
             .Where(alias => !string.IsNullOrWhiteSpace(alias))
@@ -161,14 +164,14 @@ public static class WslcCreateRequestCompatibility
         return new WslcNetworkSelection(network, aliases);
     }
 
-    internal static string? GetGpuArgument(IReadOnlyList<DockerDeviceRequest> requests)
+    internal static string? GetGpuArgument(IReadOnlyList<DockerDeviceRequest?>? requests)
     {
-        if (requests.Count == 0)
+        var request = requests?.FirstOrDefault(candidate => candidate is not null);
+        if (request is null)
         {
             return null;
         }
 
-        var request = requests[0];
         if (request.DeviceIds.Count > 0)
         {
             return $"device={string.Join(",", request.DeviceIds)}";
@@ -240,21 +243,22 @@ public static class WslcCreateRequestCompatibility
     }
 
     private static void ValidateGpuConfiguration(
-        IReadOnlyList<DockerDeviceRequest> requests,
+        IReadOnlyList<DockerDeviceRequest?>? requests,
         List<string> unsupported)
     {
-        if (requests.Count > 1)
+        var meaningfulRequests = requests?.Where(request => request is not null).ToArray() ?? [];
+        if (meaningfulRequests.Length > 1)
         {
             unsupported.Add("HostConfig.DeviceRequests (multiple GPU requests)");
             return;
         }
 
-        if (requests.Count == 0)
+        if (meaningfulRequests.Length == 0)
         {
             return;
         }
 
-        var request = requests[0];
+        var request = meaningfulRequests[0]!;
         if (!string.IsNullOrWhiteSpace(request.Driver) &&
             !string.Equals(request.Driver, "nvidia", StringComparison.OrdinalIgnoreCase))
         {
@@ -295,11 +299,45 @@ public static class WslcCreateRequestCompatibility
 
         foreach (var property in extensionData)
         {
-            if (HasMeaningfulValue(property.Value))
+            if (!IsAcceptedDockerDefault(prefix, property.Key, property.Value) &&
+                HasMeaningfulValue(property.Value))
             {
                 unsupported.Add(prefix + property.Key);
             }
         }
+    }
+
+    private static bool IsAcceptedDockerDefault(string prefix, string propertyName, JsonElement value)
+    {
+        if (!string.Equals(prefix, "HostConfig.", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (string.Equals(propertyName, "MemorySwappiness", StringComparison.Ordinal))
+        {
+            return value.ValueKind == JsonValueKind.Number &&
+                   value.TryGetInt64(out var memorySwappiness) &&
+                   memorySwappiness == -1;
+        }
+
+        if (!string.Equals(propertyName, "RestartPolicy", StringComparison.Ordinal) ||
+            value.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        return value.EnumerateObject().All(property => property.Name switch
+        {
+            "Name" => property.Value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined ||
+                      property.Value.ValueKind == JsonValueKind.String &&
+                      (string.IsNullOrWhiteSpace(property.Value.GetString()) ||
+                       string.Equals(property.Value.GetString(), "no", StringComparison.OrdinalIgnoreCase)),
+            "MaximumRetryCount" => property.Value.ValueKind == JsonValueKind.Number &&
+                                   property.Value.TryGetInt64(out var retryCount) &&
+                                   retryCount == 0,
+            _ => !HasMeaningfulValue(property.Value)
+        });
     }
 
     private static bool HasMeaningfulValue(JsonElement value)

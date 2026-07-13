@@ -18,6 +18,7 @@ internal static class InspectContainerEndpoint
         HttpContext context,
         IDockerBackend backend,
         IShimListenerClassifier listenerClassifier,
+        DockerNetworkAttachmentStore attachments,
         CancellationToken cancellationToken)
     {
         if (EndpointListenerAccess.IsRyuk(context, listenerClassifier))
@@ -27,7 +28,9 @@ internal static class InspectContainerEndpoint
 
         var json = await backend.InspectResourceJsonAsync(DockerResourceKind.Container, id, cancellationToken);
         return json is null
-            ? Results.NotFound()
-            : Results.Text(json, "application/json");
+            ? Results.Json(
+                new { message = $"No such container: {id}" },
+                statusCode: StatusCodes.Status404NotFound)
+            : Results.Text(attachments.ApplyToContainerInspect(id, json), "application/json");
     }
 }

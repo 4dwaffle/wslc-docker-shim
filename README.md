@@ -38,6 +38,25 @@ Alternatively, set `DOCKER_HOST` for the current PowerShell session:
 $env:DOCKER_HOST = "tcp://127.0.0.1:23755"
 ```
 
+## Configure Aspire
+
+Aspire 13.4.x image-based container resources can use the same Docker-compatible endpoint. The Docker CLI 25 or newer must be installed, but Docker Desktop does not need to be running because the CLI is directed to the shim:
+
+```powershell
+$env:DOCKER_HOST = "tcp://127.0.0.1:23755"
+$env:ASPIRE_CONTAINER_RUNTIME = "docker"
+$env:ASPIRE_ENABLE_CONTAINER_TUNNEL = "false"
+aspire start
+```
+
+Stop the AppHost and its containers with:
+
+```powershell
+aspire stop
+```
+
+This initial Aspire support covers pulling an image and creating, starting, inspecting, stopping, and removing a simple container. Aspire's network attachment metadata is emulated so its lifecycle checks succeed, while the WSLc container remains on its physical bridge network. Published host ports work; container-to-container DNS, Aspire network aliases, the Aspire container tunnel, and Dockerfile builds are not supported yet. Keep the shim running for the whole AppHost session.
+
 Keep Ryuk enabled. If it was disabled in your environment, remove that override:
 
 ```powershell

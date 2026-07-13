@@ -338,7 +338,9 @@ public sealed class WslcCommandBuilderTests
               "Image": "alpine:3.20",
               "Healthcheck": { "Test": ["CMD", "true"] },
               "HostConfig": {
-                "Privileged": true
+                "Privileged": true,
+                "MemorySwappiness": 50,
+                "RestartPolicy": { "Name": "always", "MaximumRetryCount": 0 }
               }
             }
             """)!;
@@ -348,6 +350,8 @@ public sealed class WslcCommandBuilderTests
 
         Assert.Contains("Healthcheck", exception.OptionPaths);
         Assert.Contains("HostConfig.Privileged", exception.OptionPaths);
+        Assert.Contains("HostConfig.MemorySwappiness", exception.OptionPaths);
+        Assert.Contains("HostConfig.RestartPolicy", exception.OptionPaths);
     }
 
     [Fact]
@@ -357,12 +361,39 @@ public sealed class WslcCommandBuilderTests
             """
             {
               "Image": "alpine:3.20",
+              "Env": null,
+              "Labels": null,
+              "Cmd": null,
+              "Entrypoint": null,
+              "ExposedPorts": null,
+              "Volumes": null,
               "ArgsEscaped": false,
               "Healthcheck": null,
+              "NetworkingConfig": {
+                "EndpointsConfig": {
+                  "default": {
+                    "Aliases": null,
+                    "DNSNames": null,
+                    "IPAMConfig": null,
+                    "Links": null
+                  }
+                }
+              },
               "HostConfig": {
+                "Binds": null,
+                "PortBindings": null,
+                "Dns": null,
+                "DnsOptions": null,
+                "DnsSearch": null,
+                "Tmpfs": null,
+                "Ulimits": null,
+                "Mounts": null,
                 "CpuShares": 0,
                 "Privileged": false,
-                "LogConfig": { "Type": "", "Config": {} }
+                "LogConfig": { "Type": "", "Config": {} },
+                "MemorySwappiness": -1,
+                "RestartPolicy": { "Name": "no", "MaximumRetryCount": 0 },
+                "DeviceRequests": null
               }
             }
             """)!;

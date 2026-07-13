@@ -26,6 +26,7 @@ public static class ShimApplication
         services.AddSingleton(options);
         services.AddSingleton(listenerClassifier);
         services.AddSingleton<RyukCleanupSessionRegistry>();
+        services.AddSingleton<DockerNetworkAttachmentStore>();
     }
 
     public static void MapRoutes(IEndpointRouteBuilder endpoints)
@@ -46,6 +47,7 @@ public static class ShimApplication
         WaitContainerEndpoint.Map(endpoints);
         CreateContainerExecEndpoint.Map(endpoints);
         GetContainerLogsEndpoint.Map(endpoints);
+        PutContainerArchiveEndpoint.Map(endpoints);
         InspectContainerEndpoint.Map(endpoints);
         ListContainersEndpoint.Map(endpoints);
         DeleteContainerEndpoint.Map(endpoints);
@@ -56,6 +58,8 @@ public static class ShimApplication
         ListNetworksEndpoint.Map(endpoints);
         CreateNetworkEndpoint.Map(endpoints);
         InspectNetworkEndpoint.Map(endpoints);
+        ConnectNetworkEndpoint.Map(endpoints);
+        DisconnectNetworkEndpoint.Map(endpoints);
         DeleteNetworkEndpoint.Map(endpoints);
 
         ListVolumesEndpoint.Map(endpoints);

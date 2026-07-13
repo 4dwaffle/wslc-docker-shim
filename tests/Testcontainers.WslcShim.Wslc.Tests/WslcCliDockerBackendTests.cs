@@ -133,6 +133,63 @@ public sealed class WslcCliDockerBackendTests
     }
 
     [Fact]
+    public async Task ListResourcesAsync_inspects_networks_by_name_instead_of_id()
+    {
+        var runner = new RecordingWslcProcessRunner
+        {
+            Results =
+            [
+                new WslcCommandResult(
+                    0,
+                    """[{"Id":"network-id","Name":"aspire-network","Driver":"bridge"}]""",
+                    string.Empty),
+                new WslcCommandResult(
+                    0,
+                    """[{"Id":"network-id","Name":"aspire-network","Driver":"bridge","Labels":{}}]""",
+                    string.Empty)
+            ]
+        };
+        var backend = new WslcCliDockerBackend(runner);
+
+        var resources = await backend.ListResourcesAsync(
+            DockerResourceKind.Network,
+            DockerLabelFilters.Empty,
+            CancellationToken.None);
+
+        Assert.Single(resources);
+        Assert.Equal("aspire-network", runner.Commands[1].Arguments.Last());
+    }
+
+    [Fact]
+    public async Task InspectResourceJsonAsync_resolves_network_id_to_name_when_wslc_rejects_id()
+    {
+        var runner = new RecordingWslcProcessRunner
+        {
+            Results =
+            [
+                new WslcCommandResult(1, "[]", "Network not found"),
+                new WslcCommandResult(
+                    0,
+                    """[{"Id":"network-id","Name":"aspire-network","Driver":"bridge"}]""",
+                    string.Empty),
+                new WslcCommandResult(
+                    0,
+                    """[{"Id":"network-id","Name":"aspire-network","Driver":"bridge"}]""",
+                    string.Empty)
+            ]
+        };
+        var backend = new WslcCliDockerBackend(runner);
+
+        var json = await backend.InspectResourceJsonAsync(
+            DockerResourceKind.Network,
+            "network-id",
+            CancellationToken.None);
+
+        Assert.NotNull(json);
+        Assert.Equal("aspire-network", runner.Commands[2].Arguments.Last());
+    }
+
+    [Fact]
     public async Task WaitContainerAsync_returns_exit_code_from_container_state()
     {
         var runner = new RecordingWslcProcessRunner

@@ -167,6 +167,135 @@ public sealed class WslcShimFixture : IAsyncLifetime
         }
     }
 
+    public async Task<AspireLifecycleResult> RunAspireLifecycleScenarioAsync()
+    {
+        var suffix = Guid.NewGuid().ToString("N");
+        var networkName = $"aspire-session-network-{suffix}";
+        var containerName = $"aspire-smoke-{suffix}";
+        string? containerId = null;
+        var networkCreated = false;
+
+        try
+        {
+            using (var pullResponse = await dockerClient.PostAsync("/images/create?fromImage=alpine&tag=3.20", null))
+            {
+                pullResponse.EnsureSuccessStatusCode();
+                var pullBody = await pullResponse.Content.ReadAsStringAsync();
+                if (!pullBody.EndsWith('\n'))
+                {
+                    throw new InvalidOperationException("The image pull response was not a Docker JSON stream.");
+                }
+            }
+
+            using (var createNetworkResponse = await dockerClient.PostAsJsonAsync(
+                       "/networks/create",
+                       new DockerResourceCreateRequest { Name = networkName, Driver = "bridge" }))
+            {
+                createNetworkResponse.EnsureSuccessStatusCode();
+            }
+
+            networkCreated = true;
+            using (var createContainerResponse = await dockerClient.PostAsJsonAsync(
+                       $"/containers/create?name={Uri.EscapeDataString(containerName)}",
+                       new DockerContainerCreateRequest
+                       {
+                           Image = "alpine:3.20",
+                           Entrypoint = ["/bin/sh", "-c"],
+                           Cmd = ["while true; do sleep 1; done"],
+                           Labels = new Dictionary<string, string>
+                           {
+                               ["com.microsoft.developer-service"] = "true"
+                           },
+                           HostConfig = new DockerHostConfig { NetworkMode = "bridge" }
+                       }))
+            {
+                createContainerResponse.EnsureSuccessStatusCode();
+                var created = await createContainerResponse.Content.ReadFromJsonAsync<DockerCreateContainerResponse>();
+                containerId = created?.Id ?? throw new InvalidOperationException("The shim returned no container ID.");
+            }
+
+            using (var disconnectResponse = await dockerClient.PostAsJsonAsync(
+                       "/networks/bridge/disconnect",
+                       new DockerNetworkDisconnectRequest { Container = containerId, Force = true }))
+            {
+                disconnectResponse.EnsureSuccessStatusCode();
+            }
+
+            using (var connectResponse = await dockerClient.PostAsJsonAsync(
+                       $"/networks/{Uri.EscapeDataString(networkName)}/connect",
+                       new DockerNetworkConnectRequest
+                       {
+                           Container = containerId,
+                           EndpointConfig = new DockerEndpointSettings
+                           {
+                               Aliases = [containerName, $"{containerName}.dev.internal"]
+                           }
+                       }))
+            {
+                connectResponse.EnsureSuccessStatusCode();
+            }
+
+            using var containerInspect = JsonDocument.Parse(
+                await dockerClient.GetStringAsync($"/containers/{Uri.EscapeDataString(containerId)}/json"));
+            var networks = containerInspect.RootElement
+                .GetProperty("NetworkSettings")
+                .GetProperty("Networks");
+            var bridgeHidden = !networks.TryGetProperty("bridge", out _);
+            var aspireNetworkVisible = networks.TryGetProperty(networkName, out var network) &&
+                                       network.GetProperty("Aliases").EnumerateArray().Any(alias =>
+                                           string.Equals(alias.GetString(), containerName, StringComparison.Ordinal));
+
+            using var networkInspect = JsonDocument.Parse(
+                await dockerClient.GetStringAsync($"/networks/{Uri.EscapeDataString(networkName)}"));
+            var networkListsContainer = networkInspect.RootElement
+                .GetProperty("Containers")
+                .TryGetProperty(containerId, out _);
+
+            using (var startResponse = await dockerClient.PostAsync(
+                       $"/containers/{Uri.EscapeDataString(containerId)}/start",
+                       null))
+            {
+                startResponse.EnsureSuccessStatusCode();
+            }
+
+            await WaitUntilAsync(
+                () => IsContainerRunningAsync(containerId),
+                TimeSpan.FromSeconds(30),
+                "The Aspire-shaped container did not start.");
+
+            using (var stopResponse = await dockerClient.PostAsync(
+                       $"/containers/{Uri.EscapeDataString(containerId)}/stop?t=10",
+                       null))
+            {
+                stopResponse.EnsureSuccessStatusCode();
+            }
+
+            var stopped = !await IsContainerRunningAsync(containerId);
+            return new AspireLifecycleResult(
+                bridgeHidden,
+                aspireNetworkVisible,
+                networkListsContainer,
+                stopped);
+        }
+        finally
+        {
+            if (containerId is not null)
+            {
+                await DeleteContainerIfPresentAsync(containerId);
+            }
+
+            if (networkCreated)
+            {
+                using var deleteNetworkResponse = await dockerClient.DeleteAsync(
+                    $"/networks/{Uri.EscapeDataString(networkName)}");
+                if (deleteNetworkResponse.StatusCode is not (HttpStatusCode.NoContent or HttpStatusCode.NotFound))
+                {
+                    deleteNetworkResponse.EnsureSuccessStatusCode();
+                }
+            }
+        }
+    }
+
     private ProcessStartInfo CreateStartInfo(string repoRoot, string projectPath)
     {
         var startInfo = new ProcessStartInfo("dotnet")
@@ -409,6 +538,12 @@ public sealed record RyukCleanupResult(
     bool OtherSessionResourceSurvived,
     bool UnlabelledResourceSurvived,
     bool RyukRemoved);
+
+public sealed record AspireLifecycleResult(
+    bool BridgeHidden,
+    bool AspireNetworkVisible,
+    bool NetworkListsContainer,
+    bool ContainerStopped);
 
 file static class RepoPaths
 {
