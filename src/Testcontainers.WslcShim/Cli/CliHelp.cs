@@ -33,6 +33,11 @@ internal static class CliHelp
               Port for the restricted Ryuk listener.
               Default: a random available port.
 
+          --watch
+              Open an interactive table of shim-created containers with live
+              status, CPU, memory, and port data. This observes runtime activity;
+              it does not reload source.
+
         Security:
           Keep the full API listener on loopback. Expose only the restricted Ryuk
           listener to the WSL/WSLc virtual network.

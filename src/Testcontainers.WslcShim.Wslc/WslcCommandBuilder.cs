@@ -152,12 +152,21 @@ public static class WslcCommandBuilder
         arguments.Add(request.Image);
         arguments.AddRange(request.Entrypoint.Skip(1));
         arguments.AddRange(request.Cmd);
-        return new WslcCommand("wslc", arguments);
+        var containerIdentifier = string.IsNullOrWhiteSpace(request.Name) ? request.Image : request.Name;
+        return new WslcCommand("wslc", arguments, $"create container {containerIdentifier}");
     }
 
     public static WslcCommand BuildListContainersCommand()
     {
         return BuildListResourcesCommand(DockerResourceKind.Container);
+    }
+
+    public static WslcCommand BuildContainerStatsCommand()
+    {
+        return new WslcCommand(
+            "wslc",
+            ["stats", "--all", "--format", "json"],
+            "read container stats");
     }
 
     public static WslcCommand BuildInspectContainerCommand(string id)
@@ -174,10 +183,14 @@ public static class WslcCommandBuilder
     {
         return kind switch
         {
-            DockerResourceKind.Container => new WslcCommand("wslc", ["list", "--all", "--format", "json"]),
-            DockerResourceKind.Network => new WslcCommand("wslc", ["network", "list", "--format", "json"]),
-            DockerResourceKind.Volume => new WslcCommand("wslc", ["volume", "list", "--format", "json"]),
-            DockerResourceKind.Image => new WslcCommand("wslc", ["image", "list", "--format", "json"]),
+            DockerResourceKind.Container => new WslcCommand(
+                "wslc", ["list", "--all", "--format", "json"], "list containers"),
+            DockerResourceKind.Network => new WslcCommand(
+                "wslc", ["network", "list", "--format", "json"], "list networks"),
+            DockerResourceKind.Volume => new WslcCommand(
+                "wslc", ["volume", "list", "--format", "json"], "list volumes"),
+            DockerResourceKind.Image => new WslcCommand(
+                "wslc", ["image", "list", "--format", "json"], "list images"),
             _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
         };
     }
@@ -186,10 +199,14 @@ public static class WslcCommandBuilder
     {
         return kind switch
         {
-            DockerResourceKind.Container => new WslcCommand("wslc", ["inspect", "--type", "container", id]),
-            DockerResourceKind.Network => new WslcCommand("wslc", ["network", "inspect", id]),
-            DockerResourceKind.Volume => new WslcCommand("wslc", ["volume", "inspect", id]),
-            DockerResourceKind.Image => new WslcCommand("wslc", ["image", "inspect", id]),
+            DockerResourceKind.Container => new WslcCommand(
+                "wslc", ["inspect", "--type", "container", id], $"inspect container {id}"),
+            DockerResourceKind.Network => new WslcCommand(
+                "wslc", ["network", "inspect", id], $"inspect network {id}"),
+            DockerResourceKind.Volume => new WslcCommand(
+                "wslc", ["volume", "inspect", id], $"inspect volume {id}"),
+            DockerResourceKind.Image => new WslcCommand(
+                "wslc", ["image", "inspect", id], $"inspect image {id}"),
             _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
         };
     }
@@ -198,22 +215,26 @@ public static class WslcCommandBuilder
     {
         return kind switch
         {
-            DockerResourceKind.Container => new WslcCommand("wslc", ["remove", "--force", id]),
-            DockerResourceKind.Network => new WslcCommand("wslc", ["network", "remove", id]),
-            DockerResourceKind.Volume => new WslcCommand("wslc", ["volume", "remove", id]),
-            DockerResourceKind.Image => new WslcCommand("wslc", ["image", "remove", id]),
+            DockerResourceKind.Container => new WslcCommand(
+                "wslc", ["remove", "--force", id], $"remove container {id}"),
+            DockerResourceKind.Network => new WslcCommand(
+                "wslc", ["network", "remove", id], $"remove network {id}"),
+            DockerResourceKind.Volume => new WslcCommand(
+                "wslc", ["volume", "remove", id], $"remove volume {id}"),
+            DockerResourceKind.Image => new WslcCommand(
+                "wslc", ["image", "remove", id], $"remove image {id}"),
             _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
         };
     }
 
     public static WslcCommand BuildStartContainerCommand(string id)
     {
-        return new WslcCommand("wslc", ["start", id]);
+        return new WslcCommand("wslc", ["start", id], $"start container {id}");
     }
 
     public static WslcCommand BuildStopContainerCommand(string id)
     {
-        return new WslcCommand("wslc", ["stop", id]);
+        return new WslcCommand("wslc", ["stop", id], $"stop container {id}");
     }
 
     public static WslcCommand BuildLogsCommand(string id, DockerLogRequest request)
@@ -226,7 +247,7 @@ public static class WslcCommandBuilder
 
         AddOption(arguments, "--tail", request.Tail);
         arguments.Add(id);
-        return new WslcCommand("wslc", arguments);
+        return new WslcCommand("wslc", arguments, $"read container logs {id}");
     }
 
     public static WslcCommand BuildExecCommand(string containerId, DockerExecCreateRequest request)
@@ -257,12 +278,12 @@ public static class WslcCommandBuilder
 
         arguments.Add(containerId);
         arguments.AddRange(request.Cmd);
-        return new WslcCommand("wslc", arguments);
+        return new WslcCommand("wslc", arguments, $"exec in container {containerId}");
     }
 
     public static WslcCommand BuildPullImageCommand(string image)
     {
-        return new WslcCommand("wslc", ["pull", image]);
+        return new WslcCommand("wslc", ["pull", image], $"pull image {image}");
     }
 
     public static WslcCommand BuildCreateResourceCommand(
@@ -287,7 +308,9 @@ public static class WslcCommandBuilder
         }
 
         AddValue(arguments, request.Name);
-        return new WslcCommand("wslc", arguments);
+        var resource = kind == DockerResourceKind.Network ? "network" : "volume";
+        var resourceIdentifier = string.IsNullOrWhiteSpace(request.Name) ? "<generated>" : request.Name;
+        return new WslcCommand("wslc", arguments, $"create {resource} {resourceIdentifier}");
     }
 
     private static IEnumerable<string> BuildPublishArguments(

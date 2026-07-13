@@ -46,10 +46,22 @@ Remove-Item Env:TESTCONTAINERS_RYUK_DISABLED -ErrorAction Ignore
 
 The shim rewrites Ryuk's create request by removing the unusable Docker socket mount and advertising a restricted cleanup listener through `DOCKER_HOST`.
 
+## Watch dashboard
+
+Use `--watch` for an interactive, WSLc-style dashboard while exercising the shim:
+
+```powershell
+dotnet run --project src\Testcontainers.WslcShim -- --watch --wslc-host-address <windows-host-address>
+```
+
+The dashboard shows one live container table with ID, name, image, age, status, CPU percentage, current memory usage, and ports. Use the arrow, Page Up/Down, Home, and End keys to scroll. Press `Ctrl+C` to stop.
+
+Watch mode requires an interactive terminal of at least 86x10 and shows only containers created through the current shim process, including Ryuk. Removed containers disappear from the live table after cleanup is confirmed; failed rows remain visible for diagnosis. It observes runtime activity; it does not reload the application when source files change.
+
 ## Security and compatibility
 
 The full API listener is intended only for the local Testcontainers process and should remain on loopback. The separate Ryuk listener is reachable by WSLc containers but permits only health/version checks, label-filtered resource lists, and cleanup of resources authorized for the active Testcontainers session. Limit any firewall rule to the WSL/WSLc virtual network and the selected Ryuk port.
 
 The full listener can create and remove resources, so do not bind it to `0.0.0.0` or expose it to the local network. The restricted listener rejects create, start, inspect, logs, exec, pull, and unlabelled cleanup requests.
 
-The shim supports the image, container, exec, network, and volume operations needed by Testcontainers where WSLc can represent them. Docker API version prefixes such as `/v1.43` are accepted. Logs and exec output are buffered rather than streamed; build, attach, archive, events, stats, and other Docker Engine features are not implemented.
+The shim supports the image, container, exec, network, and volume operations needed by Testcontainers where WSLc can represent them. Docker API version prefixes such as `/v1.43` are accepted. Logs and exec output are buffered rather than streamed; build, attach, archive, events, stats, and other Docker Engine API endpoints are not implemented.
