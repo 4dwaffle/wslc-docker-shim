@@ -1,6 +1,8 @@
 namespace Testcontainers.WslcShim;
 
-internal sealed record ShimLaunchOptions(bool WatchEnabled, string[] ApplicationArguments)
+internal sealed record ShimLaunchOptions(
+    bool WatchEnabled,
+    string[] ApplicationArguments)
 {
     private const string WatchOption = "--watch";
 
@@ -22,4 +24,9 @@ internal sealed record ShimLaunchOptions(bool WatchEnabled, string[] Application
 
         return new ShimLaunchOptions(watchEnabled, applicationArguments.ToArray());
     }
+
+    public string? GetValidationError(bool interactiveTerminal) =>
+        WatchEnabled && !interactiveTerminal
+            ? "Option --watch requires an interactive terminal."
+            : null;
 }

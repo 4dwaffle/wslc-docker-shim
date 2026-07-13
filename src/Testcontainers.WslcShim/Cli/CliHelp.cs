@@ -34,8 +34,9 @@ internal static class CliHelp
               Default: a random available port.
 
           --watch
-              Print a live terminal trace of Docker requests and translated
-              WSLc operations. This observes activity; it does not reload source.
+              Open an interactive table of shim-created containers with live
+              status, CPU, memory, and port data. This observes runtime activity;
+              it does not reload source.
 
         Security:
           Keep the full API listener on loopback. Expose only the restricted Ryuk

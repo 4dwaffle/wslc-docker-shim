@@ -161,6 +161,14 @@ public static class WslcCommandBuilder
         return BuildListResourcesCommand(DockerResourceKind.Container);
     }
 
+    public static WslcCommand BuildContainerStatsCommand()
+    {
+        return new WslcCommand(
+            "wslc",
+            ["stats", "--all", "--format", "json"],
+            "read container stats");
+    }
+
     public static WslcCommand BuildInspectContainerCommand(string id)
     {
         return BuildInspectResourceCommand(DockerResourceKind.Container, id);

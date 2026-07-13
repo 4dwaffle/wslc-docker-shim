@@ -404,6 +404,15 @@ public sealed class WslcCommandBuilderTests
     }
 
     [Fact]
+    public void BuildContainerStatsCommand_requests_one_json_snapshot_for_all_containers()
+    {
+        var command = WslcCommandBuilder.BuildContainerStatsCommand();
+
+        Assert.Equal("wslc", command.FileName);
+        Assert.Equal(["stats", "--all", "--format", "json"], command.Arguments);
+    }
+
+    [Fact]
     public void BuildLogsCommand_uses_finite_snapshot_even_when_docker_requests_follow()
     {
         var command = WslcCommandBuilder.BuildLogsCommand(

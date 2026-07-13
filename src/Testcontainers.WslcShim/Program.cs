@@ -1,5 +1,6 @@
 using Testcontainers.WslcShim;
 using Testcontainers.WslcShim.Cli;
+using Testcontainers.WslcShim.Docker;
 using Testcontainers.WslcShim.Http;
 using Testcontainers.WslcShim.Http.Models;
 using Testcontainers.WslcShim.Watch;
@@ -11,19 +12,33 @@ if (CliHelp.TryWrite(args, Console.Out))
 }
 
 var launchOptions = ShimLaunchOptions.Parse(args);
+var launchError = launchOptions.GetValidationError(SystemWatchTerminal.IsInteractive);
+if (launchError is not null)
+{
+    Console.Error.WriteLine($"error: {launchError}");
+    Console.Error.WriteLine("Use --help to see available options.");
+    Environment.ExitCode = 2;
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(launchOptions.ApplicationArguments);
 var options = ShimRuntimeOptions.FromConfiguration(builder.Configuration);
 
 var processRunner = (IWslcProcessRunner)new WslcProcessRunner();
-ConsoleWatchActivityReporter? watchReporter = null;
+
+IDockerBackend backend = new WslcCliDockerBackend(processRunner);
 if (launchOptions.WatchEnabled)
 {
-    watchReporter = ConsoleWatchActivityReporter.CreateDefault();
-    var watchRequestContext = new WatchRequestContext();
-    processRunner = new WatchingWslcProcessRunner(processRunner, watchReporter, watchRequestContext);
-    builder.Services.AddSingleton<IWatchActivityReporter>(watchReporter);
-    builder.Services.AddSingleton(watchRequestContext);
-    builder.Logging.AddFilter("Microsoft.Hosting.Lifetime", LogLevel.Warning);
+    var watchDashboard = new WatchDashboardState();
+    var terminal = new SystemWatchTerminal();
+    backend = new WatchingDockerBackend(backend, watchDashboard);
+    builder.Services.AddSingleton(watchDashboard);
+    builder.Services.AddSingleton<IWatchTerminal>(terminal);
+    builder.Services.AddSingleton<WatchDashboardRenderer>();
+    builder.Services.AddSingleton(processRunner);
+    builder.Services.AddHostedService<WatchDashboardService>();
+    builder.Services.AddHostedService<WslcContainerInventoryService>();
+    builder.Logging.ClearProviders();
 }
 
 builder.WebHost.ConfigureKestrel(serverOptions =>
@@ -34,17 +49,11 @@ builder.WebHost.ConfigureKestrel(serverOptions =>
 
 ShimApplication.ConfigureServices(
     builder.Services,
-    new WslcCliDockerBackend(processRunner),
+    backend,
     options,
     new PortListenerClassifier(options));
 
 var app = builder.Build();
-if (watchReporter is not null)
-{
-    app.UseMiddleware<WatchRequestMiddleware>();
-    app.Lifetime.ApplicationStarted.Register(() => watchReporter.WriteStartup(options));
-    app.Lifetime.ApplicationStopping.Register(watchReporter.WriteStopping);
-}
 
 app.UseDockerApiVersionPrefix();
 ShimApplication.MapRoutes(app);
