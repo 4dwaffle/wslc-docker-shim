@@ -29,6 +29,7 @@ public sealed class DashboardModeTests
         state.ObserveMissing("container-1234567890");
 
         Assert.Empty(state.Snapshot().Containers);
+        Assert.Null(state.BeginContainerOperation("db", "starting"));
     }
 
     [Fact]
@@ -71,6 +72,7 @@ public sealed class DashboardModeTests
             "running-token");
 
         Assert.True(state.ObserveListEntry(observation));
+        state.ObserveContainerDetails("container-1", new WatchContainerDetails("running", null), observation.StateToken);
         var observedVersion = state.Snapshot().Version;
 
         Assert.False(state.ObserveListEntry(observation));
@@ -86,7 +88,10 @@ public sealed class DashboardModeTests
               "Id": "container-1",
               "Image": "redis:7@sha256:abc",
               "Name": "cache",
-              "Ports": [{"HostIp":"127.0.0.1","HostPort":"49152","ContainerPort":"6379","Type":"tcp"}],
+              "Ports": [
+                {"BindingAddress":"127.0.0.1","HostPort":49152,"ContainerPort":6379,"Protocol":6},
+                {"BindingAddress":"0.0.0.0","HostPort":49153,"ContainerPort":53,"Protocol":17}
+              ],
               "State": 2,
               "StateChangedAt": 1783623463
             }]
@@ -110,7 +115,7 @@ public sealed class DashboardModeTests
 
         Assert.Equal("cache", item.Name);
         Assert.Equal("redis:7@sha256:abc", item.Image);
-        Assert.Equal("127.0.0.1:49152->6379/tcp", item.Ports);
+        Assert.Equal("127.0.0.1:49152->6379/tcp, 0.0.0.0:49153->53/udp", item.Ports);
         Assert.Contains("1783623463", item.StateToken);
         Assert.True(parsed);
         Assert.Equal("exited", details.Status);
@@ -150,6 +155,46 @@ public sealed class DashboardModeTests
     }
 
     [Fact]
+    public async Task Inventory_retries_inspection_until_the_state_token_is_successfully_applied()
+    {
+        var state = new WatchDashboardState(FixedClock());
+        var create = state.BeginContainerCreate("worker", "example/worker:1", string.Empty);
+        state.CompleteContainerCreate(create, "container-1");
+        state.SetContainerStatus("container-1", "running");
+        var inspectAttempts = 0;
+        var runner = new StubWslcProcessRunner((command, _) =>
+        {
+            if (command.Arguments[0] == "list")
+            {
+                return Task.FromResult(new WslcCommandResult(
+                    0,
+                    """[{"Id":"container-1","Name":"worker","Image":"example/worker:1","State":3,"StateChangedAt":99}]""",
+                    string.Empty));
+            }
+
+            if (command.Arguments[0] == "stats")
+            {
+                return Task.FromResult(new WslcCommandResult(0, "[]", string.Empty));
+            }
+
+            inspectAttempts++;
+            return Task.FromResult(inspectAttempts == 1
+                ? new WslcCommandResult(0, "{malformed", string.Empty)
+                : new WslcCommandResult(
+                    0,
+                    """[{"State":{"ExitCode":0,"Running":false,"Status":"exited"}}]""",
+                    string.Empty));
+        });
+        var inventory = new WslcContainerInventoryService(runner, state);
+
+        await inventory.RefreshAsync(CancellationToken.None);
+        await inventory.RefreshAsync(CancellationToken.None);
+
+        Assert.Equal(2, inspectAttempts);
+        Assert.Equal("exited (0)", Assert.Single(state.Snapshot().Containers).Status);
+    }
+
+    [Fact]
     public async Task Watching_backend_updates_only_live_container_state()
     {
         var state = new WatchDashboardState(FixedClock());
@@ -173,6 +218,7 @@ public sealed class DashboardModeTests
 
         await backend.DeleteResourceAsync(DockerResourceKind.Container, created.Id, CancellationToken.None);
         Assert.Empty(state.Snapshot().Containers);
+        Assert.Null(state.BeginContainerOperation(created.Id, "starting"));
     }
 
     [Fact]

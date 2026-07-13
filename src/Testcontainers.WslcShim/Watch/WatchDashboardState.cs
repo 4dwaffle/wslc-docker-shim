@@ -88,7 +88,18 @@ internal sealed class WatchDashboardState(TimeProvider? timeProvider = null)
 
         lock (sync)
         {
-            if (!containers.TryGetValue(value.ContainerKey, out var entry) || entry.Status == status)
+            if (!containers.TryGetValue(value.ContainerKey, out var entry))
+            {
+                return;
+            }
+
+            if (status == "removed")
+            {
+                RemoveEntry(entry);
+                return;
+            }
+
+            if (entry.Status == status)
             {
                 return;
             }
@@ -137,7 +148,7 @@ internal sealed class WatchDashboardState(TimeProvider? timeProvider = null)
         lock (sync)
         {
             return containers.Values
-                .Where(entry => entry.Id is not null && entry.Status is not ("removed" or "failed"))
+                .Where(entry => entry.Id is not null && entry.Status != "failed")
                 .Select(entry => new WatchContainerPollTarget(entry.Id!, entry.StateToken, entry.Observed))
                 .ToArray();
         }
@@ -165,8 +176,6 @@ internal sealed class WatchDashboardState(TimeProvider? timeProvider = null)
             entry.Ports = string.IsNullOrWhiteSpace(observation.Ports) ? entry.Ports : observation.Ports;
             AddAlias(entry.Name, entry.Key);
             var inspectNeeded = !entry.Observed || entry.StateToken != observation.StateToken;
-            entry.Observed = true;
-            entry.StateToken = observation.StateToken;
             if (displayChanged)
             {
                 Touch();
@@ -176,12 +185,29 @@ internal sealed class WatchDashboardState(TimeProvider? timeProvider = null)
         }
     }
 
-    public void ObserveContainerDetails(string id, WatchContainerDetails details)
+    public void ObserveContainerDetails(string id, WatchContainerDetails details, string stateToken)
     {
         var normalizedStatus = string.Equals(details.Status, "exited", StringComparison.OrdinalIgnoreCase)
             ? details.ExitCode is long exitCode ? $"exited ({exitCode})" : "exited"
             : details.Status.ToLowerInvariant();
-        SetContainerStatus(id, normalizedStatus);
+
+        lock (sync)
+        {
+            var entry = Resolve(id);
+            if (entry is null)
+            {
+                return;
+            }
+
+            var displayChanged = entry.Status != normalizedStatus;
+            entry.Status = normalizedStatus;
+            entry.Observed = true;
+            entry.StateToken = stateToken;
+            if (displayChanged)
+            {
+                Touch();
+            }
+        }
     }
 
     public void ObserveContainerStats(string id, WatchContainerStats stats)
@@ -242,8 +268,7 @@ internal sealed class WatchDashboardState(TimeProvider? timeProvider = null)
                 return;
             }
 
-            entry.Status = "removed";
-            Touch();
+            RemoveEntry(entry);
         }
     }
 
@@ -252,7 +277,6 @@ internal sealed class WatchDashboardState(TimeProvider? timeProvider = null)
         lock (sync)
         {
             var snapshots = containers.Values
-                .Where(entry => entry.Status != "removed")
                 .OrderBy(entry => entry.Id is null ? 0 : 1)
                 .ThenByDescending(entry => entry.CreatedAt)
                 .Select(entry => new WatchContainerSnapshot(
@@ -287,6 +311,24 @@ internal sealed class WatchDashboardState(TimeProvider? timeProvider = null)
         {
             aliases[alias] = key;
         }
+    }
+
+    private void RemoveEntry(ContainerEntry entry)
+    {
+        if (!containers.Remove(entry.Key))
+        {
+            return;
+        }
+
+        foreach (var alias in aliases
+                     .Where(item => item.Value == entry.Key)
+                     .Select(item => item.Key)
+                     .ToArray())
+        {
+            aliases.Remove(alias);
+        }
+
+        Touch();
     }
 
     private void Touch() => version++;

@@ -72,7 +72,7 @@ internal sealed class WslcContainerInventoryService(
             var inspectResult = await processRunner.RunAsync(inspectCommand, cancellationToken);
             if (inspectResult.ExitCode == 0 && TryParseDetails(inspectResult.StandardOutput, out var details))
             {
-                dashboard.ObserveContainerDetails(target.Id, details);
+                dashboard.ObserveContainerDetails(target.Id, details, observation.StateToken);
             }
         }
     }
@@ -139,6 +139,19 @@ internal sealed class WslcContainerInventoryService(
     }
 
     internal static bool TryParseDetails(string json, out WatchContainerDetails details)
+    {
+        try
+        {
+            return TryParseDetailsCore(json, out details);
+        }
+        catch (JsonException)
+        {
+            details = new WatchContainerDetails("unknown", null);
+            return false;
+        }
+    }
+
+    private static bool TryParseDetailsCore(string json, out WatchContainerDetails details)
     {
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
@@ -251,10 +264,10 @@ internal sealed class WslcContainerInventoryService(
                 continue;
             }
 
-            var hostIp = GetString(port, "HostIp") ?? GetString(port, "IP");
-            var hostPort = GetString(port, "HostPort") ?? NumberAsString(port, "PublicPort");
-            var containerPort = GetString(port, "ContainerPort") ?? NumberAsString(port, "PrivatePort");
-            var type = GetString(port, "Type") ?? "tcp";
+            var hostIp = GetString(port, "BindingAddress") ?? GetString(port, "HostIp") ?? GetString(port, "IP");
+            var hostPort = ScalarAsString(port, "HostPort") ?? ScalarAsString(port, "PublicPort");
+            var containerPort = ScalarAsString(port, "ContainerPort") ?? ScalarAsString(port, "PrivatePort");
+            var type = NormalizeProtocol(ScalarAsString(port, "Protocol") ?? GetString(port, "Type"));
             if (containerPort is not null)
             {
                 values.Add(hostPort is null
@@ -266,8 +279,25 @@ internal sealed class WslcContainerInventoryService(
         return string.Join(", ", values.Where(value => !string.IsNullOrWhiteSpace(value)));
     }
 
-    private static string? NumberAsString(JsonElement element, string propertyName) =>
-        element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.Number
-            ? property.GetRawText()
-            : null;
+    private static string? ScalarAsString(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var property))
+        {
+            return null;
+        }
+
+        return property.ValueKind switch
+        {
+            JsonValueKind.String => property.GetString(),
+            JsonValueKind.Number => property.GetRawText(),
+            _ => null
+        };
+    }
+
+    private static string NormalizeProtocol(string? protocol) => protocol?.Trim().ToLowerInvariant() switch
+    {
+        null or "" or "6" => "tcp",
+        "17" => "udp",
+        var value => value
+    };
 }
