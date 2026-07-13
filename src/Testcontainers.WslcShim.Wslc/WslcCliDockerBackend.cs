@@ -139,6 +139,16 @@ public sealed class WslcCliDockerBackend : IDockerBackend
     {
         var command = WslcCommandBuilder.BuildInspectResourceCommand(kind, id);
         var result = await processRunner.RunAsync(command, cancellationToken);
+        if (result.ExitCode != 0 && kind is DockerResourceKind.Network or DockerResourceKind.Volume)
+        {
+            var name = await ResolveListedResourceNameAsync(kind, id, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(name) && !string.Equals(name, id, StringComparison.Ordinal))
+            {
+                command = WslcCommandBuilder.BuildInspectResourceCommand(kind, name);
+                result = await processRunner.RunAsync(command, cancellationToken);
+            }
+        }
+
         if (result.ExitCode != 0)
         {
             return null;
@@ -152,6 +162,33 @@ public sealed class WslcCliDockerBackend : IDockerBackend
         return kind == DockerResourceKind.Container
             ? NormalizeContainerInspectJson(rawJson)
             : rawJson;
+    }
+
+    private async Task<string?> ResolveListedResourceNameAsync(
+        DockerResourceKind kind,
+        string id,
+        CancellationToken cancellationToken)
+    {
+        var command = WslcCommandBuilder.BuildListResourcesCommand(kind);
+        var result = await processRunner.RunAsync(command, cancellationToken);
+        if (result.ExitCode != 0)
+        {
+            return null;
+        }
+
+        using var document = JsonDocument.Parse(result.StandardOutput);
+        foreach (var item in document.RootElement.EnumerateArray())
+        {
+            var listedId = GetStringProperty(item, "Id") ?? GetStringProperty(item, "ID");
+            var listedName = GetStringProperty(item, "Name");
+            if (string.Equals(listedId, id, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(listedName, id, StringComparison.OrdinalIgnoreCase))
+            {
+                return listedName;
+            }
+        }
+
+        return null;
     }
 
     public async Task DeleteResourceAsync(
@@ -372,6 +409,13 @@ public sealed class WslcCliDockerBackend : IDockerBackend
             {
                 return $"{repository}:{tag}";
             }
+        }
+
+        if (kind is DockerResourceKind.Network or DockerResourceKind.Volume)
+        {
+            return GetStringProperty(element, "Name") ??
+                   GetStringProperty(element, "Id") ??
+                   GetStringProperty(element, "ID");
         }
 
         return GetStringProperty(element, "Id") ??

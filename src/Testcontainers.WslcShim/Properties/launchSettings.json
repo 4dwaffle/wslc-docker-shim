@@ -2,6 +2,7 @@
   "profiles": {
     "Testcontainers.WslcShim": {
       "commandName": "Project",
+      "commandLineArgs": "--watch",
       "launchBrowser": true,
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development"

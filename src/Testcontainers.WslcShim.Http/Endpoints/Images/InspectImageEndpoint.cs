@@ -31,7 +31,9 @@ internal static class InspectImageEndpoint
         var imageId = id[..^InspectSuffix.Length];
         var json = await backend.InspectResourceJsonAsync(DockerResourceKind.Image, imageId, cancellationToken);
         return json is null
-            ? Results.NotFound()
+            ? Results.Json(
+                new { message = $"No such image: {imageId}" },
+                statusCode: StatusCodes.Status404NotFound)
             : Results.Text(json, "application/json");
     }
 }

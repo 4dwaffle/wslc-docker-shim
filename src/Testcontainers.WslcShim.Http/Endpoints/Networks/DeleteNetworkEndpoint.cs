@@ -21,6 +21,7 @@ internal static class DeleteNetworkEndpoint
         IDockerBackend backend,
         IShimListenerClassifier listenerClassifier,
         RyukCleanupSessionRegistry cleanupSessions,
+        DockerNetworkAttachmentStore attachments,
         CancellationToken cancellationToken)
     {
         var authorization = await RyukCleanupEndpointAuthorization.AuthorizeDeleteAsync(
@@ -42,6 +43,7 @@ internal static class DeleteNetworkEndpoint
         }
 
         await backend.DeleteResourceAsync(DockerResourceKind.Network, id, cancellationToken);
+        attachments.RemoveNetwork(id);
         return Results.NoContent();
     }
 }

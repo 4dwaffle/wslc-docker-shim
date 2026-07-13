@@ -5,6 +5,17 @@ namespace Testcontainers.WslcShim.Docker.Models;
 
 public sealed record DockerContainerCreateRequest
 {
+    private IReadOnlyList<string> env = [];
+    private IReadOnlyDictionary<string, string> labels = new Dictionary<string, string>();
+    private IReadOnlyList<string> cmd = [];
+    private IReadOnlyList<string> entrypoint = [];
+    private IReadOnlyDictionary<string, object?> exposedPorts = new Dictionary<string, object?>();
+    private IReadOnlyDictionary<string, object?> volumes = new Dictionary<string, object?>();
+    private DockerHostConfig hostConfig = new();
+    private DockerNetworkingConfig networkingConfig = new();
+    private IDictionary<string, JsonElement> additionalProperties =
+        new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+
     [JsonPropertyName("Image")]
     public string? Image { get; init; }
 
@@ -42,19 +53,35 @@ public sealed record DockerContainerCreateRequest
     public bool StdinOnce { get; init; }
 
     [JsonPropertyName("Env")]
-    public IReadOnlyList<string> Env { get; init; } = [];
+    public IReadOnlyList<string> Env
+    {
+        get => env;
+        init => env = value ?? [];
+    }
 
     [JsonPropertyName("Labels")]
-    public IReadOnlyDictionary<string, string> Labels { get; init; } = new Dictionary<string, string>();
+    public IReadOnlyDictionary<string, string> Labels
+    {
+        get => labels;
+        init => labels = value ?? new Dictionary<string, string>();
+    }
 
     [JsonPropertyName("Cmd")]
-    public IReadOnlyList<string> Cmd { get; init; } = [];
+    public IReadOnlyList<string> Cmd
+    {
+        get => cmd;
+        init => cmd = value ?? [];
+    }
 
     [JsonPropertyName("WorkingDir")]
     public string? WorkingDir { get; init; }
 
     [JsonPropertyName("Entrypoint")]
-    public IReadOnlyList<string> Entrypoint { get; init; } = [];
+    public IReadOnlyList<string> Entrypoint
+    {
+        get => entrypoint;
+        init => entrypoint = value ?? [];
+    }
 
     [JsonPropertyName("NetworkDisabled")]
     public bool? NetworkDisabled { get; init; }
@@ -66,20 +93,39 @@ public sealed record DockerContainerCreateRequest
     // Compatibility validation accepts it only when WSLc also receives the
     // corresponding publish binding (or --publish-all).
     [JsonPropertyName("ExposedPorts")]
-    public IReadOnlyDictionary<string, object?> ExposedPorts { get; init; } = new Dictionary<string, object?>();
+    public IReadOnlyDictionary<string, object?> ExposedPorts
+    {
+        get => exposedPorts;
+        init => exposedPorts = value ?? new Dictionary<string, object?>();
+    }
 
     [JsonPropertyName("Volumes")]
-    public IReadOnlyDictionary<string, object?> Volumes { get; init; } = new Dictionary<string, object?>();
+    public IReadOnlyDictionary<string, object?> Volumes
+    {
+        get => volumes;
+        init => volumes = value ?? new Dictionary<string, object?>();
+    }
 
     [JsonPropertyName("HostConfig")]
-    public DockerHostConfig HostConfig { get; init; } = new();
+    public DockerHostConfig HostConfig
+    {
+        get => hostConfig;
+        init => hostConfig = value ?? new DockerHostConfig();
+    }
 
     [JsonPropertyName("NetworkingConfig")]
-    public DockerNetworkingConfig NetworkingConfig { get; init; } = new();
+    public DockerNetworkingConfig NetworkingConfig
+    {
+        get => networkingConfig;
+        init => networkingConfig = value ?? new DockerNetworkingConfig();
+    }
 
     // Capturing unknown fields lets the compatibility validator reject values
     // that WSLc cannot represent instead of silently discarding them.
     [JsonExtensionData]
-    public IDictionary<string, JsonElement> AdditionalProperties { get; init; } =
-        new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+    public IDictionary<string, JsonElement> AdditionalProperties
+    {
+        get => additionalProperties;
+        init => additionalProperties = value ?? new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+    }
 }

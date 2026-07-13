@@ -27,7 +27,9 @@ internal static class InspectVolumeEndpoint
 
         var json = await backend.InspectResourceJsonAsync(DockerResourceKind.Volume, id, cancellationToken);
         return json is null
-            ? Results.NotFound()
+            ? Results.Json(
+                new { message = $"get {id}: no such volume" },
+                statusCode: StatusCodes.Status404NotFound)
             : Results.Text(json, "application/json");
     }
 }
